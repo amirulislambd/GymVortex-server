@@ -37,6 +37,58 @@ async function run() {
     });
 
     // ── Classes Routes ──
+
+    app.get("/api/classes", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 12;
+        const search = req.query.search || "";
+        const category = req.query.category || "All";
+
+        let query = { status: "approved" };
+        // search logic
+        if (search) {
+          query.$or = [
+            { status: "approved" },
+            { title: { $regex: search, $options: "i" } },
+            { trainerName: { $regex: search, $options: "i" } },
+          ];
+        }
+        // category logic
+        if (category !== "All") {
+          query.category = { $regex: `^${category}`, $options: "i" };
+        }
+        // pagination
+        const skip = (page - 1) * limit;
+        const totalItems = await classesCollection.countDocuments(query);
+        const classesData = await classesCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+        const totalPages = Math.ceil(totalItems / limit);
+
+        res.status(200).json({
+          success: true,
+          data: classesData,
+          pagination: {
+            totalItems,
+            totalPages,
+            currentPage: page,
+            limit,
+          },
+        });
+      } catch (error) {
+        console.error("Error fetching classes:", error);
+        res.status(500).json({
+          success: false,
+          message: "Error fetching classes",
+          error: error.message,
+        });
+      }
+    });
+
     app.post("/api/classes", async (req, res) => {
       try {
         const classData = req.body;
