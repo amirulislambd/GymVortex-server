@@ -30,6 +30,8 @@ async function run() {
     // Database Collections
     const usersCollection = db.collection("users");
     const classesCollection = db.collection("classes");
+    const bookingsCollection = db.collection("bookings");
+
     // API Routes
     // ── Health Check ──
     app.get("/", (req, res) => {
@@ -174,6 +176,75 @@ async function run() {
         res.status(500).json({
           success: false,
           message: "Error adding class",
+          error: error.message,
+        });
+      }
+    });
+
+    // ── Bookings Routes ──
+
+    app.post("/api/bookings", async (req, res) => {
+      try {
+        const { className, priceAmount, userEmail, classId, stripeSessionId } =
+          req.body;
+        // create a new booking to the database
+        const newBooking = {
+          className,
+          priceAmount,
+          userEmail,
+          classId,
+          stripeSessionId,
+          createdAt: new Date(),
+        };
+        const result = await bookingsCollection.insertOne(newBooking);
+        res.status(201).json({
+          success: true,
+          message: "Booking recorded successfully in GymVortex DB!",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error creating booking:", error);
+        res.status(500).json({
+          success: false,
+          message: "Error creating booking",
+          error: error.message,
+        });
+      }
+    });
+
+    // ── GET Booking Details By Session ID ──
+    app.get("/api/bookings", async (req, res) => {
+      try {
+        const { sessionId } = req.query; // ক্যাচিং কুয়েরি প্যারামিটার
+
+        if (!sessionId) {
+          return res.status(400).json({
+            success: false,
+            message: "Session ID parameter is required",
+          });
+        }
+
+        // ডাটাবেজের stripeSessionId এর সাথে ইউআরএল প্যারামিটার ম্যাচ করা হচ্ছে
+        const result = await db
+          .collection("bookings")
+          .findOne({ stripeSessionId: sessionId });
+
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            message: "No booking found with this session ID",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error fetching booking by session ID:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
           error: error.message,
         });
       }
