@@ -44,29 +44,54 @@ async function run() {
         const limit = parseInt(req.query.limit) || 12;
         const search = req.query.search || "";
         const category = req.query.category || "All";
+        const difficulty = req.query.difficulty || "";
+        const sortPrice = req.query.sortPrice || ""; // 'low-to-high' or 'high-to-low'
 
+        // Base query: Always fetch approved classes
         let query = { status: "approved" };
-        // search logic
+
+        // FIXED Search Logic: Search strictly inside title or trainerName
         if (search) {
-          query.$or = [
+          query.$and = [
             { status: "approved" },
-            { title: { $regex: search, $options: "i" } },
-            { trainerName: { $regex: search, $options: "i" } },
+            {
+              $or: [
+                { title: { $regex: search, $options: "i" } },
+                { trainerName: { $regex: search, $options: "i" } },
+              ],
+            },
           ];
         }
-        // category logic
+
+        // Category filter
         if (category !== "All") {
           query.category = { $regex: `^${category}`, $options: "i" };
         }
-        // pagination
+
+        // Difficulty filter (Optional)
+        if (difficulty && difficulty !== "All") {
+          query.difficulty = difficulty;
+        }
+
+        // Dynamic Sorting Object
+        let sortObj = { createdAt: -1 }; // Default sort
+        if (sortPrice === "low-to-high") {
+          sortObj = { price: 1 }; // Ascending
+        } else if (sortPrice === "high-to-low") {
+          sortObj = { price: -1 }; // Descending
+        }
+
+        // Pagination
         const skip = (page - 1) * limit;
         const totalItems = await classesCollection.countDocuments(query);
+
         const classesData = await classesCollection
           .find(query)
-          .sort({ createdAt: -1 })
+          .sort(sortObj) // Injected sorting pipeline
           .skip(skip)
           .limit(limit)
           .toArray();
+
         const totalPages = Math.ceil(totalItems / limit);
 
         res.status(200).json({
@@ -88,6 +113,26 @@ async function run() {
         });
       }
     });
+    // app.get("/api/sixClasses", async (req, res) => {
+    //   try {
+    //     const classesData = await classesCollection
+    //       .find()
+    //       .limit(6)
+    //       .sort({ createdAt: -1 })
+    //       .toArray();
+    //     res.status(200).json({
+    //       success: true,
+    //       data: classesData,
+    //     });
+    //   } catch (error) {
+    //     console.error("Error fetching classes:", error);
+    //     res.status(500).json({
+    //       success: false,
+    //       message: "Error fetching classes",
+    //       error: error.message,
+    //     });
+    //   }
+    // });
 
     app.post("/api/classes", async (req, res) => {
       try {
