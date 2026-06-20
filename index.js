@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 
 const app = express();
@@ -113,26 +113,43 @@ async function run() {
         });
       }
     });
-    // app.get("/api/sixClasses", async (req, res) => {
-    //   try {
-    //     const classesData = await classesCollection
-    //       .find()
-    //       .limit(6)
-    //       .sort({ createdAt: -1 })
-    //       .toArray();
-    //     res.status(200).json({
-    //       success: true,
-    //       data: classesData,
-    //     });
-    //   } catch (error) {
-    //     console.error("Error fetching classes:", error);
-    //     res.status(500).json({
-    //       success: false,
-    //       message: "Error fetching classes",
-    //       error: error.message,
-    //     });
-    //   }
-    // });
+
+    app.get("/api/classes/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        // ObjectId validation
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid class ID format",
+          });
+        }
+
+        const result = await classesCollection.findOne({
+          _id: new ObjectId(id),
+          status: "approved", // only approved classes visible publicly
+        });
+
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            message: "Class not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error("GET /api/classes/:id error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
 
     app.post("/api/classes", async (req, res) => {
       try {
