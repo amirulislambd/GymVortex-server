@@ -250,8 +250,7 @@ async function run() {
       }
     });
 
-    // apply to trainer
-
+    // ── Apply to Trainer ──
     app.post("/api/applyToTrainer", async (req, res) => {
       try {
         const data = req.body;
@@ -292,6 +291,59 @@ async function run() {
         });
       } catch (error) {
         console.error("Error applying to trainer:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
+    app.get("/api/applyToTrainer", async (req, res) => {
+      try {
+        const result = await applyToTrainerCollection.find().toArray();
+        res.status(200).json({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error fetching applications:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+    app.get("/api/applyToTrainer/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid ID format provided. Must be a 24-character hex string.",
+            data: null,
+          });
+        }
+
+        const result = await applyToTrainerCollection.findOne({
+          applicantId: id,
+        });
+
+        if (!result) {
+          return res.status(200).json({
+            success: false,
+            message: "No document found matching this ID",
+            data: null,
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error fetching application by ID:", error);
         res.status(500).json({
           success: false,
           message: "Internal server error",
