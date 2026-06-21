@@ -313,6 +313,7 @@ async function run() {
         });
       }
     });
+
     app.get("/api/applyToTrainer/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -350,6 +351,7 @@ async function run() {
         });
       }
     });
+
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
