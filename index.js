@@ -28,9 +28,10 @@ async function run() {
     const db = client.db("GymVortex");
 
     // Database Collections
-    const usersCollection = db.collection("users");
+    const userCollection = db.collection("user");
     const classesCollection = db.collection("classes");
     const bookingsCollection = db.collection("bookings");
+    const applyToTrainerCollection = db.collection("applyToTrainer");
 
     // API Routes
     // ── Health Check ──
@@ -215,7 +216,7 @@ async function run() {
     // ── GET Booking Details By Session ID ──
     app.get("/api/bookings", async (req, res) => {
       try {
-        const { sessionId } = req.query; // ক্যাচিং কুয়েরি প্যারামিটার
+        const { sessionId } = req.query;
 
         if (!sessionId) {
           return res.status(400).json({
@@ -224,7 +225,6 @@ async function run() {
           });
         }
 
-        // ডাটাবেজের stripeSessionId এর সাথে ইউআরএল প্যারামিটার ম্যাচ করা হচ্ছে
         const result = await db
           .collection("bookings")
           .findOne({ stripeSessionId: sessionId });
@@ -250,6 +250,54 @@ async function run() {
       }
     });
 
+    // apply to trainer
+
+    app.post("/api/applyToTrainer", async (req, res) => {
+      try {
+        const data = req.body;
+        const { userEmail } = data;
+
+        if (!userEmail) {
+          return res.status(400).json({
+            success: false,
+            message: "User email is required",
+          });
+        }
+
+        const existing = await applyToTrainerCollection.findOne({
+          userEmail,
+          status: "pending",
+        });
+
+        if (existing) {
+          return res.status(409).json({
+            success: false,
+            message: "You already have a pending application",
+          });
+        }
+
+        const newApplication = {
+          ...data,
+          status: "pending",
+          adminFeedback: "",
+          appliedAt: new Date(),
+        };
+
+        const result = await applyToTrainerCollection.insertOne(newApplication);
+
+        res.status(201).json({
+          success: true,
+          message: "Application submitted successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error applying to trainer:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
