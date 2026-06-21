@@ -187,14 +187,32 @@ async function run() {
 
     app.post("/api/bookings", async (req, res) => {
       try {
-        const { className, priceAmount, userEmail, classId, stripeSessionId } =
-          req.body;
+        const {
+          className,
+          classImage,
+          priceAmount,
+          userEmail,
+          classId,
+          stripeSessionId,
+        } = req.body;
+        const existingBooking = await bookingsCollection.findOne({
+          classId,
+          userEmail,
+        });
+        if (existingBooking) {
+          return res.status(409).json({
+            success: true,
+            message: "Booking already exists with this session ID",
+          });
+        }
+
         // create a new booking to the database
         const newBooking = {
           className,
           priceAmount,
           userEmail,
           classId,
+          classImage,
           stripeSessionId,
           createdAt: new Date(),
         };
@@ -250,6 +268,26 @@ async function run() {
         });
       }
     });
+    //  ──── CHECK BOOKING ────
+    app.get("/api/bookings/check", async (req, res) => {
+      try {
+        const { userEmail, classId } = req.query;
+        if (!userEmail || !classId) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Email and classId required" });
+        }
+        const booking = await bookingsCollection.findOne({
+          userEmail,
+          classId,
+        });
+        res.json({ success: true, isBooked: !!booking });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
+      }
+    });
 
     // ──── FAVORITE CLASSES  ────
     app.post("/api/favoriteClasses", async (req, res) => {
@@ -299,28 +337,24 @@ async function run() {
       }
     });
 
-    app.get("api/favoriteClasses/id", async (req, res) => {
+    // Check if user already favorited a class
+    app.get("/api/favoriteClasses/check", async (req, res) => {
       try {
-        const { userEmail } = req.query;
-        if (!userEmail) {
+        const { userEmail, classId } = req.query;
+        if (!userEmail || !classId) {
           return res
             .status(400)
-            .json({ success: false, message: "User email is required" });
+            .json({ success: false, message: "Email and classId required" });
         }
-        const result = await favoriteClassesCollection
-          .find({ userEmail })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.status(200).json({ success: true, data: result });
+        const favorite = await favoriteClassesCollection.findOne({
+          userEmail,
+          classId,
+        });
+        res.json({ success: true, isFavorite: !!favorite });
       } catch (error) {
-        console.error("Error fetching favorite classes:", error);
         res
           .status(500)
-          .json({
-            success: false,
-            message: "Internal server error",
-            error: error.message,
-          });
+          .json({ success: false, message: "Internal server error" });
       }
     });
 
