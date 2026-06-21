@@ -32,6 +32,7 @@ async function run() {
     const classesCollection = db.collection("classes");
     const bookingsCollection = db.collection("bookings");
     const applyToTrainerCollection = db.collection("applyToTrainer");
+    const favoriteClassesCollection = db.collection("favoriteClasses");
 
     // API Routes
     // ── Health Check ──
@@ -247,6 +248,79 @@ async function run() {
           message: "Internal server error",
           error: error.message,
         });
+      }
+    });
+
+    // ──── FAVORITE CLASSES  ────
+    app.post("/api/favoriteClasses", async (req, res) => {
+      try {
+        const favoriteData = req.body;
+        const { userEmail, classId } = favoriteData; // Extract userEmail and classId from the request body
+
+        if (!userEmail || !classId) {
+          return res.status(400).json({
+            success: false,
+            message: "User email and class ID are required",
+          });
+        }
+
+        const existing = await favoriteClassesCollection.findOne({
+          userEmail,
+          classId,
+        });
+
+        if (existing) {
+          return res.status(409).json({
+            success: false,
+            message: "You have already favorited this class",
+          });
+        }
+
+        const newFavoriteClass = {
+          ...favoriteData,
+          createdAt: new Date(),
+        };
+
+        const result =
+          await favoriteClassesCollection.insertOne(newFavoriteClass);
+
+        res.status(201).json({
+          success: true,
+          message: "Class favorited successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error favoriting class:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+          error: error.message,
+        });
+      }
+    });
+
+    app.get("api/favoriteClasses/id", async (req, res) => {
+      try {
+        const { userEmail } = req.query;
+        if (!userEmail) {
+          return res
+            .status(400)
+            .json({ success: false, message: "User email is required" });
+        }
+        const result = await favoriteClassesCollection
+          .find({ userEmail })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.status(200).json({ success: true, data: result });
+      } catch (error) {
+        console.error("Error fetching favorite classes:", error);
+        res
+          .status(500)
+          .json({
+            success: false,
+            message: "Internal server error",
+            error: error.message,
+          });
       }
     });
 
