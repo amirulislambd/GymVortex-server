@@ -386,6 +386,42 @@ async function run() {
       }
     });
 
+    // DELETE Favorite Class
+    app.delete("/api/favoriteClasses/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        // ObjectId validation
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid ID format",
+          });
+        }
+
+        const result = await favoriteClassesCollection.deleteOne({
+          _id: new ObjectId(id), // ← ObjectId convert
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Favorite not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: "Class unfavorited successfully",
+        });
+      } catch (error) {
+        console.error("DELETE /api/favoriteClasses/:id error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
     // ── Apply to Trainer ──
     app.post("/api/applyToTrainer", async (req, res) => {
       try {
