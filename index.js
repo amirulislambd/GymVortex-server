@@ -184,7 +184,7 @@ async function run() {
     });
 
     // ── Bookings Routes ──
-
+    //ADD NEW BOOKING
     app.post("/api/bookings", async (req, res) => {
       try {
         const {
@@ -232,43 +232,39 @@ async function run() {
       }
     });
 
-    // ── GET Booking Details By Session ID ──
+    // ── GET Booking Class by email ──
     app.get("/api/bookings", async (req, res) => {
       try {
-        const { sessionId } = req.query;
+        const { email } = req.query;
 
-        if (!sessionId) {
+        if (!email) {
           return res.status(400).json({
             success: false,
-            message: "Session ID parameter is required",
+            message: "Email query parameter is required",
           });
         }
 
-        const result = await db
-          .collection("bookings")
-          .findOne({ stripeSessionId: sessionId });
-
-        if (!result) {
-          return res.status(404).json({
-            success: false,
-            message: "No booking found with this session ID",
-          });
-        }
+        const userBookings = await bookingsCollection
+          .find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
 
         res.status(200).json({
           success: true,
-          data: result,
+          count: userBookings.length,
+          data: userBookings,
         });
       } catch (error) {
-        console.error("Error fetching booking by session ID:", error);
+        console.error("Error fetching bookings:", error);
         res.status(500).json({
           success: false,
-          message: "Internal server error",
+          message: "Error fetching bookings",
           error: error.message,
         });
       }
     });
-    //  ──── CHECK BOOKING ────
+
+    //  ──── CHECK BOOKING CLASS ────
     app.get("/api/bookings/check", async (req, res) => {
       try {
         const { userEmail, classId } = req.query;
@@ -289,7 +285,7 @@ async function run() {
       }
     });
 
-    // ──── FAVORITE CLASSES  ────
+    // ──── ADD FAVORITE CLASSES  ────
     app.post("/api/favoriteClasses", async (req, res) => {
       try {
         const favoriteData = req.body;
@@ -332,6 +328,38 @@ async function run() {
         res.status(500).json({
           success: false,
           message: "Internal server error",
+          error: error.message,
+        });
+      }
+    });
+
+    // ─── GET Favorite Classes by email ──
+    app.get("/api/favoriteClasses", async (req, res) => {
+      try {
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: "Email query parameter is required",
+          });
+        }
+
+        const userFavorites = await favoriteClassesCollection
+          .find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          count: userFavorites.length,
+          data: userFavorites,
+        });
+      } catch (error) {
+        console.error("Error fetching favorite classes:", error);
+        res.status(500).json({
+          success: false,
+          message: "Error fetching favorite classes",
           error: error.message,
         });
       }
