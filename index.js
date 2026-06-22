@@ -40,7 +40,7 @@ async function run() {
       res.json({ status: "running", message: "GymVortex API is live" });
     });
 
-    // ── Classes Routes ──
+    // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
       try {
@@ -155,6 +155,42 @@ async function run() {
       }
     });
 
+    app.get("/api/trainer/class", async (req, res) => {
+      try {
+        const { email, search } = req.query;
+
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: "Trainer email is required",
+          });
+        }
+        let query = { trainerEmail: email };
+        if (search && search.trim() !== "") {
+          query.$or = [
+            { title: { $regex: search, $options: "i" } },
+            { category: { $regex: search, $options: "i" } },
+          ];
+        }
+
+        const result = await classesCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.status(200).json({
+          success: true,
+          count: result.length,
+          data: result,
+        });
+      } catch (error) {
+        console.error("GET /api/trainer/class error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
     app.post("/api/classes", async (req, res) => {
       try {
         const classData = req.body;
@@ -183,7 +219,7 @@ async function run() {
       }
     });
 
-    // ── Bookings Routes ──
+    // ==================BOOKINGS RELATED ROUTES=================
     //ADD NEW BOOKING
     app.post("/api/bookings", async (req, res) => {
       try {
@@ -285,6 +321,7 @@ async function run() {
       }
     });
 
+    // =================FAVORITE RELATED ROUTES=================
     // ──── ADD FAVORITE CLASSES  ────
     app.post("/api/favoriteClasses", async (req, res) => {
       try {
@@ -422,6 +459,8 @@ async function run() {
         });
       }
     });
+
+    // ===================TRAINER RELATED ROUTES============
     // ── Apply to Trainer ──
     app.post("/api/applyToTrainer", async (req, res) => {
       try {
@@ -469,7 +508,7 @@ async function run() {
         });
       }
     });
-
+    // ─── Get all applications ──
     app.get("/api/applyToTrainer", async (req, res) => {
       try {
         const result = await applyToTrainerCollection.find().toArray();
@@ -485,7 +524,7 @@ async function run() {
         });
       }
     });
-
+    // ─── Get application by ID ──
     app.get("/api/applyToTrainer/:id", async (req, res) => {
       try {
         const { id } = req.params;
