@@ -664,7 +664,51 @@ async function run() {
         });
       }
     });
+    // GET TRAINER FORUM POST WITH SEARCH AND PAGINATION
+    app.get("/api/myForumPosts", async (req, res) => {
+      try {
+        const { email, page = 1, limit = 9, search = "" } = req.query;
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: "Email is required",
+          });
+        }
 
+        const currentPage = parseInt(page);
+        const perPage = parseInt(limit);
+        const skip = (currentPage - 1) * limit;
+
+        const query = { authorEmail: email };
+
+        if (search) {
+          query.title = { $regex: search, $options: "i" };
+        }
+        const totalPosts = await forumPostCollection.countDocuments(query);
+        const totalPages = Math.ceil(totalPosts / perPage);
+        const posts = await forumPostCollection
+          .find(query)
+          .skip(skip)
+          .limit(perPage)
+          .toArray();
+        res.status(200).json({
+          success: true,
+          posts,
+          meta: {
+            currentPage,
+            totalPages,
+            perPage,
+            totalPosts,
+          },
+        });
+      } catch (error) {
+        console.error("Error fetching forum posts:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
 
     // ── Server Start ──
     app.listen(port, () => {
