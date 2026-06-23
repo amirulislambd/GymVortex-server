@@ -219,6 +219,31 @@ async function run() {
       }
     });
 
+    app.put("/api/classes/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const classData = req.body;
+        delete classData._id;
+        const result = await classesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: classData },
+        );
+
+        if (result.modifiedCount > 0) {
+          res
+            .status(200)
+            .json({ success: true, message: "Class updated successfully" });
+        } else {
+          res.status(404).json({ success: false, message: "Class not found" });
+        }
+      } catch (error) {
+        console.error("Error updating class:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Error updating class" });
+      }
+    });
+
     app.delete("/api/trainer/class/:id", async (req, res) => {
       try {
         const { id } = req.params;
