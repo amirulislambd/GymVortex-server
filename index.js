@@ -225,9 +225,11 @@ async function run() {
         const { id } = req.params;
         const classData = req.body;
         delete classData._id;
+
         const result = await classesCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: classData },
+          { $set: { updatedAt: new Date() } },
         );
 
         if (result.modifiedCount > 0) {
@@ -709,6 +711,66 @@ async function run() {
         });
       }
     });
+    // GET FORUM BY ID
+    app.get("/api/forumPost/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await forumPostCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            message: "Forum post not found",
+          });
+        }
+        res.status(200).json({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error fetching forum post:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
+    //  UPDATE FORUM POST
+    app.put("/api/forumPost/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const data = req.body;
+        delete data._id;
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            ...data,
+            updatedAt: new Date(),
+          },
+        };
+        const result = await forumPostCollection.updateOne(filter, updateDoc);
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Forum post not found",
+          });
+        }
+        res.status(200).json({
+          success: true,
+          message: "Forum post updated successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error updating forum post:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
     // DELETE FORUM POST
     app.delete("/api/forumPost/:id", async (req, res) => {
       try {
