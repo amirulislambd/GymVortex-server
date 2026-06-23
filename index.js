@@ -709,7 +709,32 @@ async function run() {
         });
       }
     });
-
+    // DELETE FORUM POST
+    app.delete("/api/forumPost/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await forumPostCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Forum post not found",
+          });
+        }
+        res.status(200).json({
+          success: true,
+          message: "Forum post deleted successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error deleting forum post:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
