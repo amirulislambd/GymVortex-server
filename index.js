@@ -33,6 +33,7 @@ async function run() {
     const bookingsCollection = db.collection("bookings");
     const applyToTrainerCollection = db.collection("applyToTrainer");
     const favoriteClassesCollection = db.collection("favoriteClasses");
+    const forumPostCollection = db.collection("forumPost");
 
     // API Routes
     // ── Health Check ──
@@ -636,6 +637,34 @@ async function run() {
         });
       }
     });
+
+    // ─── FORUM POST RELATED ROUTES ───
+
+    //  FORUM POST
+    app.post("/api/forumPost", async (req, res) => {
+      try {
+        const data = req.body;
+        const result = await forumPostCollection.insertOne({
+          ...data,
+          likes: [],
+          dislikes: [],
+          commentsCount: 0,
+          createdAt: new Date(),
+        });
+        res.status(201).json({
+          success: true,
+          message: "Forum post created successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Error creating forum post:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
 
     // ── Server Start ──
     app.listen(port, () => {
