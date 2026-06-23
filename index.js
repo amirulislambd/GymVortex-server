@@ -219,6 +219,27 @@ async function run() {
       }
     });
 
+    app.delete("/api/trainer/class/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await classesCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        if (result.deletedCount === 1) {
+          res
+            .status(200)
+            .json({ success: true, message: "Class deleted successfully" });
+        } else {
+          res.status(404).json({ success: false, message: "Class not found" });
+        }
+      } catch (error) {
+        console.error("Error deleting class:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Error deleting class" });
+      }
+    });
+
     // ==================BOOKINGS RELATED ROUTES=================
     //ADD NEW BOOKING
     app.post("/api/bookings", async (req, res) => {
