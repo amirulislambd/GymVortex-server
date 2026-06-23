@@ -274,6 +274,8 @@ async function run() {
           classImage,
           priceAmount,
           userEmail,
+          userName,
+          userImage,
           classId,
           stripeSessionId,
         } = req.body;
@@ -293,6 +295,8 @@ async function run() {
           className,
           priceAmount,
           userEmail,
+          userName,
+          userImage,
           classId,
           classImage,
           stripeSessionId,
@@ -336,6 +340,30 @@ async function run() {
           count: userBookings.length,
           data: userBookings,
         });
+      } catch (error) {
+        console.error("Error fetching bookings:", error);
+        res.status(500).json({
+          success: false,
+          message: "Error fetching bookings",
+          error: error.message,
+        });
+      }
+    });
+    //  GET BOOKING BY CLASS ID
+    app.get("/api/bookings/classId", async (req, res) => {
+      try {
+        const { classId } = req.query;
+        if (!classId) {
+          return res.status(400).json({
+            success: false,
+            message: "Class ID query parameter is required",
+          });
+        }
+        const bookings = await bookingsCollection
+          .find({ classId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.status(200).json({ success: true, data: bookings });
       } catch (error) {
         console.error("Error fetching bookings:", error);
         res.status(500).json({
