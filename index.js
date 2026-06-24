@@ -126,6 +126,89 @@ async function run() {
       }
     });
 
+    // ==================== USER SPECIFIC DASHBOARD OVERVIEW METRICS ====================
+    app.get("/api/user/overview-metrics", async (req, res) => {
+      try {
+        const { email } = req.query;
+
+        if (!email) {
+          return res
+            .status(400)
+            .json({ success: false, message: "User email is required" });
+        }
+
+        const userEmailNormalized = email.trim().toLowerCase();
+
+        // 1. Fetch user from the original userCollection
+        const userDetails = await userCollection.findOne({
+          email: userEmailNormalized,
+        });
+
+        if (!userDetails) {
+          return res
+            .status(404)
+            .json({ success: false, message: "User not found in database" });
+        }
+
+        // 2. Fetch the latest application status from applyToTrainerCollection
+        const trainerApplication = await applyToTrainerCollection.findOne({
+          userEmail: userEmailNormalized,
+        });
+
+        // 3. Count total booked classes from bookingsCollection
+        const totalBooked = await bookingsCollection.countDocuments({
+          userEmail: userEmailNormalized,
+        });
+
+        // 4. Count total favorite classes from favoriteClassesCollection
+        const totalFavorites = await favoriteClassesCollection.countDocuments({
+          userEmail: userEmailNormalized,
+        });
+
+        // 5. Generate cyberpunk username from email prefix
+        const emailPrefix = userEmailNormalized.split("@")[0].toUpperCase();
+        const generatedUsername = `${emailPrefix}_01`;
+
+        // 6. Dynamically set membership badge based on user plan
+        const membershipBadge =
+          userDetails.plan === "free_user" ? "FREE MEMBER" : "ELITE MEMBER";
+
+        // Send the combined response object to frontend
+        res.status(200).json({
+          success: true,
+          data: {
+            banner: {
+              version: "V2.4",
+              username: generatedUsername,
+              rank: userDetails.rank || "TITAN II",
+              streak: userDetails.streak || 12,
+            },
+            stats: {
+              totalBooked,
+              totalFavorites,
+              role: userDetails.role || "user",
+            },
+            profile: {
+              name: userDetails.name,
+              email: userDetails.email,
+              image: userDetails.image,
+              roleBadge: membershipBadge,
+              trainerStatus: trainerApplication
+                ? trainerApplication.status
+                : "none",
+              adminFeedback: trainerApplication
+                ? trainerApplication.adminFeedback
+                : "",
+            },
+          },
+        });
+      } catch (error) {
+        console.error("Error fetching user overview metrics:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
+      }
+    });
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
