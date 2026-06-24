@@ -41,6 +41,91 @@ async function run() {
       res.json({ status: "running", message: "GymVortex API is live" });
     });
 
+    // ==========TRAINER SPECIFIC DASHBOARD METRICS (API Version 1 Strict Fixed)==============
+    app.get("/api/trainer/dashboard-metrics", async (req, res) => {
+      try {
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: "Trainer email is required",
+          });
+        }
+
+        const trainerEmail = email.trim().toLowerCase();
+
+        // 1. All classes by this trainer
+        const myClasses = await classesCollection
+          .find({ trainerEmail })
+          .toArray();
+
+        const totalClasses = myClasses.length;
+        const myClassIds = myClasses.map((c) => c._id.toString());
+
+        // No classes yet — return zeros
+        if (myClassIds.length === 0) {
+          return res.status(200).json({
+            success: true,
+            data: {
+              totalStudents: 0,
+              totalClasses: 0,
+              totalEnrolled: 0,
+              bookingsTodayCount: 0,
+            },
+          });
+        }
+
+        // 2. FIXED: Unique students enrolled using aggregation ($group) instead of .distinct()
+        const uniqueStudentsResult = await bookingsCollection
+          .aggregate([
+            {
+              $match: {
+                classId: { $in: myClassIds },
+              },
+            },
+            {
+              $group: {
+                _id: "$userEmail", // Grouping by userEmail filters out duplicates automatically
+              },
+            },
+          ])
+          .toArray();
+
+        const totalStudents = uniqueStudentsResult.length;
+
+        // 3. Total enrolled (all bookings count)
+        const totalEnrolled = await bookingsCollection.countDocuments({
+          classId: { $in: myClassIds },
+        });
+
+        // 4. Bookings made today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const bookingsTodayCount = await bookingsCollection.countDocuments({
+          classId: { $in: myClassIds },
+          createdAt: { $gte: today },
+        });
+
+        res.status(200).json({
+          success: true,
+          data: {
+            totalStudents,
+            totalClasses,
+            totalEnrolled,
+            bookingsTodayCount,
+          },
+        });
+      } catch (error) {
+        console.error("GET /api/trainer/dashboard-metrics error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
@@ -228,11 +313,15 @@ async function run() {
 
         const result = await classesCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: classData },
-          { $set: { updatedAt: new Date() } },
+          {
+            $set: {
+              ...classData,
+              updatedAt: new Date(),
+            },
+          },
         );
 
-        if (result.modifiedCount > 0) {
+        if (result.matchedCount > 0) {
           res
             .status(200)
             .json({ success: true, message: "Class updated successfully" });
