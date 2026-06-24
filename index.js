@@ -379,6 +379,32 @@ async function run() {
       }
     });
 
+    app.get("/api/admin/manage-trainers", async (req, res) => {
+      const { page = 1, limit = 5, search, role } = req.query;
+      const skip = (page - 1) * limit;
+
+      let query = {};
+      if (search) {
+        query.fullName = { $regex: search, $options: "i" };
+      }
+      if (role) {
+        query.specialty = role;
+      }
+
+      const total = await trainersCollection.countDocuments(query);
+      const data = await trainersCollection
+        .find(query)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .toArray();
+
+      res.send({
+        data,
+        totalPages: Math.ceil(total / limit),
+        currentPage: parseInt(page),
+      });
+    });
+
     app.patch("/api/admin/user/block/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -451,7 +477,40 @@ async function run() {
         });
       }
     });
-    
+
+    app.patch("/api/admin/apply/trainer/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status, adminFeedback, userEmail } = req.body;
+        const result = await applyToTrainerCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status, adminFeedback } },
+        );
+
+        if (result.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Application not found" });
+        }
+
+        if (status === "approved") {
+          await usersCollection.updateOne(
+            { email: userEmail },
+            { $set: { role: "trainer" } },
+          );
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `Trainer application ${status} successfully`,
+        });
+      } catch (error) {
+        console.error("Apply trainer error:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
+      }
+    });
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
