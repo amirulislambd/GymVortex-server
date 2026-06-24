@@ -126,7 +126,7 @@ async function run() {
       }
     });
 
-    // ==================== USER SPECIFIC DASHBOARD OVERVIEW METRICS ====================
+    // ============ USER DASHBOARD OVERVIEW METRICS =============
     app.get("/api/user/overview-metrics", async (req, res) => {
       try {
         const { email } = req.query;
@@ -181,7 +181,8 @@ async function run() {
               version: "V2.4",
               username: generatedUsername,
               rank: userDetails.rank || "TITAN II",
-              streak: userDetails.streak || 12,
+              streak:
+                typeof userDetails.streak === "number" ? userDetails.streak : 1,
             },
             stats: {
               totalBooked,
@@ -209,6 +210,175 @@ async function run() {
           .json({ success: false, message: "Internal server error" });
       }
     });
+    // ==================== UPDATE USER STREAK & RANK AUTOMATICALLY ====================
+    app.put("/api/user/update-activity", async (req, res) => {
+      try {
+        const { email } = req.body;
+
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: "User email is required",
+          });
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const user = await userCollection.findOne({ email: normalizedEmail });
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        const now = new Date();
+        const todayStr = now.toISOString().split("T")[0]; // "2026-06-24"
+
+        const lastCheckIn = user.lastActiveDate
+          ? new Date(user.lastActiveDate).toISOString().split("T")[0]
+          : null;
+
+        const currentStreak = typeof user.streak === "number" ? user.streak : 0;
+
+        // Already visited today — return without touching DB
+        if (lastCheckIn === todayStr) {
+          return res.status(200).json({
+            success: true,
+            message: "Activity already recorded today",
+            streak: currentStreak,
+            rank: user.rank || "RECRUIT",
+          });
+        }
+
+        // Calculate new streak
+        let newStreak;
+        if (!lastCheckIn) {
+          newStreak = 1; // First ever check-in
+        } else {
+          const diffDays = Math.round(
+            (new Date(todayStr) - new Date(lastCheckIn)) /
+              (1000 * 60 * 60 * 24),
+          );
+          newStreak = diffDays === 1 ? currentStreak + 1 : 1;
+        }
+
+        // Rank thresholds
+        let newRank = "RECRUIT";
+        if (newStreak >= 30) newRank = "TITAN II";
+        else if (newStreak >= 15) newRank = "PRO ATHLETE";
+        else if (newStreak >= 5) newRank = "WARRIOR";
+
+        // Simple updateOne — no findOneAndUpdate complexity
+        const updateResult = await userCollection.updateOne(
+          { email: normalizedEmail },
+          {
+            $set: {
+              streak: newStreak,
+              rank: newRank,
+              lastActiveDate: now,
+            },
+          },
+        );
+
+        console.log("Activity update result:", updateResult);
+
+        if (updateResult.modifiedCount === 0) {
+          return res.status(500).json({
+            success: false,
+            message: "Database update failed — document not modified",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Streak and rank updated successfully",
+          streak: newStreak,
+          rank: newRank,
+        });
+      } catch (error) {
+        console.error("Error updating user activity:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
+    // ===============ADMIN RELATED ROUTES=================
+
+    app.get("/api/admin/user", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const search = req.query.search || "";
+
+        let query = {};
+        if (search) {
+          query = {
+            $or: [
+              { name: { $regex: search, $options: "i" } },
+              { email: { $regex: search, $options: "i" } },
+            ],
+          };
+        }
+        const skip = (page - 1) * limit;
+        const totalUsers = await userCollection.countDocuments(query);
+
+        const users = await userCollection
+          .find(query)
+          .skip(skip)
+          .limit(limit)
+          .sort({ createdAt: -1 })
+          .toArray();
+        const totalPages = Math.ceil(totalUsers / limit);
+
+        res.status(200).json({
+          success: true,
+          users,
+          currentPage: page,
+          totalPages: totalPages || 1,
+          totalUsers,
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
+    app.get("/api/admin/user/manage", async (req, res) => {
+      try {
+        const { id } = req.query;
+        const { bannedStatus } = req.query;
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              banned: bannedStatus,
+            },
+          },
+        );
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found or no changes made",
+          });
+        }
+        res.status(200).json({
+          success: true,
+          message: `User ${bannedStatus ? "blocked" : "unblocked"} successfully`,
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
@@ -813,7 +983,6 @@ async function run() {
     });
 
     // ─── FORUM POST RELATED ROUTES ───
-
     //  FORUM POST
     app.post("/api/forumPost", async (req, res) => {
       try {
