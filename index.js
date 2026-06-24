@@ -58,12 +58,31 @@ async function run() {
         if (!user)
           return res.status(401).json({ error: "Unauthorized access" });
 
+        // Blocked users cannot perform write operations
+        if (user.banned && req.method !== "GET") {
+          return res.status(403).json({
+            error: "Your account has been restricted by an administrator.",
+            blocked: true,
+          });
+        }
         req.user = user;
         next();
       } catch (error) {
         res.status(401).json({ error: "Unauthorized access" });
       }
     };
+
+    // const checkBanned = async (req, res, next) => {
+    //   if (req.user.banned) {
+    //     return res.status(403).json({
+    //       success: false,
+    //       error: "Action restricted by Admin.",
+    //       code: "ACCOUNT_BANNED",
+    //     });
+    //   }
+
+    //   next();
+    // };
 
     const verifyAdmin = async (req, res, next) => {
       const user = req.user;
@@ -632,7 +651,7 @@ async function run() {
             { $set: { role: "user" } },
           );
 
-          // User খুঁজে পাওয়া যায়নি
+          // User not found
           if (result.matchedCount === 0) {
             return res.status(404).json({
               success: false,
@@ -1337,19 +1356,12 @@ async function run() {
       }
     });
 
+    //
+
     // ─── Get application by ID ──
     app.get("/api/applyToTrainer/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
-
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Invalid ID format provided. Must be a 24-character hex string.",
-            data: null,
-          });
-        }
 
         const result = await applyToTrainerCollection.findOne({
           applicantId: id,
@@ -1369,6 +1381,42 @@ async function run() {
         });
       } catch (error) {
         console.error("Error fetching application by ID:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
+    app.delete("/api/applyToTrainer/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid application ID",
+          });
+        }
+
+        const result = await applyToTrainerCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Application not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: "Application deleted successfully",
+        });
+      } catch (error) {
+        console.error(error);
+
         res.status(500).json({
           success: false,
           message: "Internal server error",
