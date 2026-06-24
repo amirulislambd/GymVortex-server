@@ -379,8 +379,8 @@ async function run() {
       }
     });
 
-    app.get("/api/admin/manage-trainers", async (req, res) => {
-      const { page = 1, limit = 5, search, role } = req.query;
+    app.get("/api/admin/manage/trainers", async (req, res) => {
+      const { page = 1, limit = 10, search, role } = req.query;
       const skip = (page - 1) * limit;
 
       let query = {};
@@ -396,6 +396,7 @@ async function run() {
         .find(query)
         .skip(skip)
         .limit(parseInt(limit))
+        .sort({ createdAt: -1 })
         .toArray();
 
       res.send({
@@ -478,23 +479,32 @@ async function run() {
       }
     });
 
-    app.patch("/api/admin/apply/trainer/:id", async (req, res) => {
+    app.patch("/api/admin/update/trainer/action/:id", async (req, res) => {
       try {
         const { id } = req.params;
         const { status, adminFeedback, userEmail } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid application ID format",
+          });
+        }
+
         const result = await applyToTrainerCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: { status, adminFeedback } },
         );
 
         if (result.modifiedCount === 0) {
-          return res
-            .status(404)
-            .json({ success: false, message: "Application not found" });
+          return res.status(404).json({
+            success: false,
+            message: "Application not found",
+          });
         }
 
         if (status === "approved") {
-          await usersCollection.updateOne(
+          await userCollection.updateOne(
             { email: userEmail },
             { $set: { role: "trainer" } },
           );
@@ -505,12 +515,50 @@ async function run() {
           message: `Trainer application ${status} successfully`,
         });
       } catch (error) {
-        console.error("Apply trainer error:", error);
-        res
-          .status(500)
-          .json({ success: false, message: "Internal server error" });
+        console.error("Trainer action error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
       }
     });
+
+    app.patch("/api/admin/demote/trainer", async (req, res) => {
+      try {
+        const { email } = req.body;
+
+        if (!email) {
+          return res.status(400).json({
+            success: false,
+            message: "Email is required",
+          });
+        }
+
+        const result = await userCollection.updateOne(
+          { email: email.trim().toLowerCase() },
+          { $set: { role: "user" } },
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: "Trainer demoted to user successfully",
+        });
+      } catch (error) {
+        console.error("Demote trainer error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
@@ -1062,7 +1110,9 @@ async function run() {
     // ─── Get all applications ──
     app.get("/api/applyToTrainer", async (req, res) => {
       try {
-        const result = await applyToTrainerCollection.find().toArray();
+        const result = await applyToTrainerCollection
+          .find({ status: "pending" })
+          .toArray();
         res.status(200).json({
           success: true,
           data: result,
@@ -1075,6 +1125,7 @@ async function run() {
         });
       }
     });
+
     // ─── Get application by ID ──
     app.get("/api/applyToTrainer/:id", async (req, res) => {
       try {
