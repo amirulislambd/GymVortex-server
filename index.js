@@ -379,6 +379,79 @@ async function run() {
       }
     });
 
+    app.patch("/api/admin/user/block/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { banned } = req.body;
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              banned: banned,
+              ...(banned && {
+                blockedUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+              }),
+            },
+            ...(!banned && { $unset: { blockedUntil: "" } }),
+          },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `User ${banned ? "blocked" : "unblocked"} successfully`,
+        });
+      } catch (error) {
+        console.error("Block error:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
+      }
+    });
+
+    app.patch("/api/admin/user/make-admin/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid user ID",
+          });
+        }
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role: "admin" } },
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: "User promoted to admin successfully",
+        });
+      } catch (error) {
+        console.error("Make admin error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+    
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
