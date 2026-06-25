@@ -539,16 +539,25 @@ async function run() {
           { $set: { role: "user" } },
         );
 
-        if (result.modifiedCount === 0) {
+        // User খুঁজে পাওয়া যায়নি
+        if (result.matchedCount === 0) {
           return res.status(404).json({
             success: false,
             message: "User not found",
           });
         }
 
+        // Already user role — still success
+        if (result.modifiedCount === 0) {
+          return res.status(200).json({
+            success: true,
+            message: "User was already a regular user",
+          });
+        }
+
         res.status(200).json({
           success: true,
-          message: "Trainer demoted to user successfully",
+          message: "Trainer demoted successfully",
         });
       } catch (error) {
         console.error("Demote trainer error:", error);
@@ -558,7 +567,6 @@ async function run() {
         });
       }
     });
-
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
@@ -568,21 +576,20 @@ async function run() {
         const search = req.query.search || "";
         const category = req.query.category || "All";
         const difficulty = req.query.difficulty || "";
-        const sortPrice = req.query.sortPrice || ""; // 'low-to-high' or 'high-to-low'
+        const sortPrice = req.query.sortPrice || "";
+        const status = req.query.status || "approved";
 
-        // Base query: Always fetch approved classes
-        let query = { status: "approved" };
+        let query = {};
+
+        if (status.toLocaleUpperCase() !== "ALL") {
+          query.status = { $regex: `^${status}`, $options: "i" };
+        }
 
         // FIXED Search Logic: Search strictly inside title or trainerName
         if (search) {
-          query.$and = [
-            { status: "approved" },
-            {
-              $or: [
-                { title: { $regex: search, $options: "i" } },
-                { trainerName: { $regex: search, $options: "i" } },
-              ],
-            },
+          query.$or = [
+            { title: { $regex: search, $options: "i" } },
+            { trainerName: { $regex: search, $options: "i" } },
           ];
         }
 
@@ -597,25 +604,37 @@ async function run() {
         }
 
         // Dynamic Sorting Object
-        let sortObj = { createdAt: -1 }; // Default sort
+        let sortObj = { createdAt: -1 };
         if (sortPrice === "low-to-high") {
-          sortObj = { price: 1 }; // Ascending
+          sortObj = { price: 1 };
         } else if (sortPrice === "high-to-low") {
-          sortObj = { price: -1 }; // Descending
+          sortObj = { price: -1 };
         }
 
         // Pagination
         const skip = (page - 1) * limit;
+
         const totalItems = await classesCollection.countDocuments(query);
 
         const classesData = await classesCollection
           .find(query)
-          .sort(sortObj) // Injected sorting pipeline
+          .sort(sortObj)
           .skip(skip)
           .limit(limit)
           .toArray();
 
         const totalPages = Math.ceil(totalItems / limit);
+
+        // 🎯 কেস-ইনসেন্সিটিভ কাউন্টিং পাইপলাইন (ডাটাবেজে ছোট/বড় হাতের যাই থাকুক, সঠিক কাউন্ট আসবে)
+        const pendingCount = await classesCollection.countDocuments({
+          status: { $regex: "^pending$", $options: "i" },
+        });
+        const approvedCount = await classesCollection.countDocuments({
+          status: { $regex: "^approved$", $options: "i" },
+        });
+        const rejectedCount = await classesCollection.countDocuments({
+          status: { $regex: "^rejected$", $options: "i" },
+        });
 
         res.status(200).json({
           success: true,
@@ -625,6 +644,11 @@ async function run() {
             totalPages,
             currentPage: page,
             limit,
+          },
+          stats: {
+            pendingCount,
+            approvedCount,
+            rejectedCount,
           },
         });
       } catch (error) {
@@ -636,7 +660,6 @@ async function run() {
         });
       }
     });
-
     app.get("/api/classes/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -709,6 +732,56 @@ async function run() {
         });
       }
     });
+
+    // app.get("/api/classes", async (req, res) => {
+    //   try {
+    //     const search = searchParams.get("search") || "";
+    //     const status = searchParams.get("status") || "All";
+    //     const page = parseInt(searchParams.get("page")) || 1;
+    //     const limit = parseInt(searchParams.get("limit")) || 10;
+
+    //     const query = {};
+    //     if (search) {
+    //       query.$or = [
+    //         { title: { $regex: search, $options: "i" } },
+    //         { trainerName: { $regex: search, $options: "i" } },
+    //       ];
+    //     }
+    //     if (status && status !== "All") {
+    //       query.status = status;
+    //     }
+
+    //     const skip = (page - 1) * limit;
+    //     const totalRecords = await classesCollection.countDocuments(query);
+
+    //     const classesData = await classesCollection
+    //       .find(query)
+    //       .sort({ createdAt: -1 })
+    //       .skip(skip)
+    //       .limit(limit)
+    //       .toArray();
+
+    //     const totalPages = Math.ceil(totalRecords / limit);
+
+    //     res.status(200).json({
+    //       success: true,
+    //       data: classesData,
+    //       meta: {
+    //         totalRecords,
+    //         totalPages,
+    //         currentPage: page,
+    //         limit,
+    //       },
+    //     });
+    //   } catch (error) {
+    //     console.error("Error fetching classes:", error);
+    //     res.status(500).json({
+    //       success: false,
+    //       message: "Error fetching classes",
+    //       error: error.message,
+    //     });
+    //   }
+    // });
 
     app.post("/api/classes", async (req, res) => {
       try {
