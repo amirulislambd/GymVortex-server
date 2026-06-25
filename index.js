@@ -632,51 +632,37 @@ async function run() {
     );
 
     app.patch(
-      "/api/admin/demote/trainer",
+      "/api/admin/demote/trainer/:id",
       verifyToken,
       verifyAdmin,
       async (req, res) => {
         try {
-          const { email } = req.body;
+          const { id } = req.params;
+          const { userEmail } = req.body;
 
-          if (!email) {
-            return res.status(400).json({
-              success: false,
-              message: "Email is required",
-            });
-          }
-
-          const result = await userCollection.updateOne(
-            { email: email.trim().toLowerCase() },
+          await userCollection.updateOne(
+            { email: userEmail.trim().toLowerCase() },
             { $set: { role: "user" } },
           );
 
-          // User not found
+          const result = await applyToTrainerCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: "rejected" } },
+          );
+
           if (result.matchedCount === 0) {
-            return res.status(404).json({
-              success: false,
-              message: "User not found",
-            });
+            return res
+              .status(404)
+              .json({ success: false, message: "Application not found" });
           }
 
-          // Already user role — still success
-          if (result.modifiedCount === 0) {
-            return res.status(200).json({
-              success: true,
-              message: "User was already a regular user",
-            });
-          }
-
-          res.status(200).json({
-            success: true,
-            message: "Trainer demoted successfully",
-          });
+          res
+            .status(200)
+            .json({ success: true, message: "Trainer demoted successfully" });
         } catch (error) {
-          console.error("Demote trainer error:", error);
-          res.status(500).json({
-            success: false,
-            message: "Internal server error",
-          });
+          res
+            .status(500)
+            .json({ success: false, message: "Internal server error" });
         }
       },
     );
@@ -1339,7 +1325,7 @@ async function run() {
       },
     );
     // ─── Get all applications ──
-    app.get("/api/applyToTrainer", verifyToken, async (req, res) => {
+    app.get("/api/pending/applyToTrainer", verifyToken, async (req, res) => {
       try {
         const result = await applyToTrainerCollection
           .find({ status: "pending" })
