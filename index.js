@@ -34,7 +34,7 @@ async function run() {
     const applyToTrainerCollection = db.collection("applyToTrainer");
     const favoriteClassesCollection = db.collection("favoriteClasses");
     const forumPostCollection = db.collection("forumPost");
-    const forumCommentCollection = db.collection("forumComment");
+    const commentsCollection = db.collection("forumComments");
 
     // API Routes
     // ── Health Check ──
@@ -1557,6 +1557,82 @@ async function run() {
         res
           .status(500)
           .json({ success: false, message: "Error fetching comments" });
+      }
+    });
+
+    // EDIT A REPLY COMMENT
+    app.put("/api/comments/:commentId/reply/:replyId", async (req, res) => {
+      try {
+        const { commentId, replyId } = req.params;
+        const { content } = req.body;
+
+        const result = await commentsCollection.updateOne(
+          {
+            _id: new ObjectId(commentId),
+            "replies.replyId": new ObjectId(replyId),
+          },
+          {
+            $set: {
+              "replies.$.content": content,
+            },
+          },
+        );
+
+        if (!result.modifiedCount) {
+          return res.status(404).json({
+            success: false,
+            message: "Reply not found",
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Reply updated",
+        });
+      } catch (error) {
+        console.log(error);
+        res.status(500).json({
+          success: false,
+          message: "Failed to update reply",
+        });
+      }
+    });
+
+    // DELETE A REPLY
+    app.delete("/api/comments/:commentId/reply/:replyId", async (req, res) => {
+      try {
+        const { commentId, replyId } = req.params;
+
+        const result = await commentsCollection.updateOne(
+          {
+            _id: new ObjectId(commentId),
+          },
+          {
+            $pull: {
+              replies: {
+                replyId: new ObjectId(replyId),
+              },
+            },
+          },
+        );
+
+        if (!result.modifiedCount) {
+          return res.status(404).json({
+            success: false,
+            message: "Reply not found",
+          });
+        }
+
+        res.json({
+          success: true,
+          message: "Reply deleted",
+        });
+      } catch (error) {
+        console.log(error);
+        res.status(500).json({
+          success: false,
+          message: "Failed to delete reply",
+        });
       }
     });
 
