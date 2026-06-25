@@ -1535,6 +1535,17 @@ async function run() {
       }
     });
 
+    // DELETE A COMMENT OR REPLY BY ID
+    app.delete("/api/comments/:commentId", async (req, res) => {
+      try {
+        const { commentId } = req.params;
+        await commentsCollection.deleteOne({ _id: new ObjectId(commentId) });
+        res.status(200).json({ success: true, message: "Comment deleted" });
+      } catch (error) {
+        res.status(500).json({ success: false, message: "Delete failed" });
+      }
+    });
+
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
