@@ -1520,6 +1520,21 @@ async function run() {
       }
     });
 
+    // EDIT A COMMENT
+    app.put("/api/comments/:commentId", async (req, res) => {
+      try {
+        const { commentId } = req.params;
+        const { content } = req.body;
+        await commentsCollection.updateOne(
+          { _id: new ObjectId(commentId) },
+          { $set: { content, updatedAt: new Date() } },
+        );
+        res.status(200).json({ success: true, message: "Comment updated" });
+      } catch (error) {
+        res.status(500).json({ success: false, message: "Update failed" });
+      }
+    });
+
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
