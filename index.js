@@ -624,8 +624,6 @@ async function run() {
           .toArray();
 
         const totalPages = Math.ceil(totalItems / limit);
-
-        // 🎯 কেস-ইনসেন্সিটিভ কাউন্টিং পাইপলাইন (ডাটাবেজে ছোট/বড় হাতের যাই থাকুক, সঠিক কাউন্ট আসবে)
         const pendingCount = await classesCollection.countDocuments({
           status: { $regex: "^pending$", $options: "i" },
         });
@@ -733,56 +731,6 @@ async function run() {
       }
     });
 
-    // app.get("/api/classes", async (req, res) => {
-    //   try {
-    //     const search = searchParams.get("search") || "";
-    //     const status = searchParams.get("status") || "All";
-    //     const page = parseInt(searchParams.get("page")) || 1;
-    //     const limit = parseInt(searchParams.get("limit")) || 10;
-
-    //     const query = {};
-    //     if (search) {
-    //       query.$or = [
-    //         { title: { $regex: search, $options: "i" } },
-    //         { trainerName: { $regex: search, $options: "i" } },
-    //       ];
-    //     }
-    //     if (status && status !== "All") {
-    //       query.status = status;
-    //     }
-
-    //     const skip = (page - 1) * limit;
-    //     const totalRecords = await classesCollection.countDocuments(query);
-
-    //     const classesData = await classesCollection
-    //       .find(query)
-    //       .sort({ createdAt: -1 })
-    //       .skip(skip)
-    //       .limit(limit)
-    //       .toArray();
-
-    //     const totalPages = Math.ceil(totalRecords / limit);
-
-    //     res.status(200).json({
-    //       success: true,
-    //       data: classesData,
-    //       meta: {
-    //         totalRecords,
-    //         totalPages,
-    //         currentPage: page,
-    //         limit,
-    //       },
-    //     });
-    //   } catch (error) {
-    //     console.error("Error fetching classes:", error);
-    //     res.status(500).json({
-    //       success: false,
-    //       message: "Error fetching classes",
-    //       error: error.message,
-    //     });
-    //   }
-    // });
-
     app.post("/api/classes", async (req, res) => {
       try {
         const classData = req.body;
@@ -842,6 +790,44 @@ async function run() {
       }
     });
 
+    app.patch("/api/classes/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+        const result = await classesCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } },
+        );
+        if (result.matchedCount > 0) {
+          res.status(200).json({
+            success: true,
+            message: "Class status updated successfully",
+          });
+        } else {
+          res.status(404).json({ success: false, message: "Class not found" });
+        }
+      } catch (error) {}
+    });
+    app.delete("/api/classes/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await classesCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        if (result.deletedCount === 1) {
+          res
+            .status(200)
+            .json({ success: true, message: "Class deleted successfully" });
+        } else {
+          res.status(404).json({ success: false, message: "Class not found" });
+        }
+      } catch (error) {
+        console.error("Error deleting class:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Error deleting class" });
+      }
+    });
     app.delete("/api/trainer/class/:id", async (req, res) => {
       try {
         const { id } = req.params;
