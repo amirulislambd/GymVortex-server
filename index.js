@@ -1535,7 +1535,7 @@ async function run() {
       }
     });
 
-    // DELETE A COMMENT OR REPLY BY ID
+    // DELETE A COMMENT OR REPLY
     app.delete("/api/comments/:commentId", async (req, res) => {
       try {
         const { commentId } = req.params;
@@ -1543,6 +1543,20 @@ async function run() {
         res.status(200).json({ success: true, message: "Comment deleted" });
       } catch (error) {
         res.status(500).json({ success: false, message: "Delete failed" });
+      }
+    });
+    // ===== GET ALL COMMENTS FOR A POST========
+    app.get("/api/comments/:postId", async (req, res) => {
+      try {
+        const comments = await commentsCollection
+          .find({ postId: new ObjectId(req.params.postId) })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.status(200).json({ success: true, data: comments });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, message: "Error fetching comments" });
       }
     });
 
