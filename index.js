@@ -34,6 +34,7 @@ async function run() {
     const applyToTrainerCollection = db.collection("applyToTrainer");
     const favoriteClassesCollection = db.collection("favoriteClasses");
     const forumPostCollection = db.collection("forumPost");
+    const forumCommentCollection = db.collection("forumComment");
 
     // API Routes
     // ── Health Check ──
@@ -1468,6 +1469,30 @@ async function run() {
         });
       }
     });
+
+    // ===== FORUM COMMENT RELATED ROUTES =====
+
+    app.post("/api/comments", async (req, res) => {
+      try {
+        const { postId, userId, content, authorName, authorImage } = req.body;
+        const newComment = {
+          postId: new ObjectId(postId),
+          userId: new ObjectId(userId),
+          content,
+          authorName,
+          authorImage,
+          replies: [],
+          createdAt: new Date(),
+        };
+        const result = await commentsCollection.insertOne(newComment);
+        res.status(201).json({ success: true, data: result });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to add comment" });
+      }
+    });
+
 
     // ── Server Start ──
     app.listen(port, () => {
