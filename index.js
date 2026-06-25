@@ -849,7 +849,7 @@ async function run() {
       }
     });
 
-    // ===========BOOKINGS RELATED ROUTES================
+    // ===========BOOKINGS RELATED ROUTES=============
     //ADD NEW BOOKING
     app.post("/api/bookings", async (req, res) => {
       try {
@@ -1289,6 +1289,54 @@ async function run() {
         });
       }
     });
+
+    // GET ALL FORUM POSTS WITH PAGINATION, SEARCH, AND FILTER
+    app.get("/api/forumPost", async (req, res) => {
+      try {
+        const { page = 1, limit = 10, search, role } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        let query = {};
+
+        // 1. Searching by Title (Case-insensitive)
+        if (search) {
+          query.title = { $regex: search, $options: "i" };
+        }
+
+        // 2. Filtering by Role (Admin or Trainer)
+        if (role) {
+          query.role = role;
+        }
+
+        // Fetch data with limit and skip
+        const posts = await forumPostCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit))
+          .toArray();
+
+        // Get total count for pagination calculation
+        const totalPosts = await forumPostCollection.countDocuments(query);
+
+        res.status(200).json({
+          success: true,
+          data: posts,
+          pagination: {
+            totalPosts,
+            totalPages: Math.ceil(totalPosts / limit),
+            currentPage: parseInt(page),
+          },
+        });
+      } catch (error) {
+        console.error("Error fetching forum posts:", error);
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+
     // GET TRAINER FORUM POST WITH SEARCH AND PAGINATION
     app.get("/api/myForumPosts", async (req, res) => {
       try {
