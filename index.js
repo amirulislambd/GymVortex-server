@@ -734,6 +734,7 @@ async function run() {
           .sort(sortObj)
           .skip(skip)
           .limit(limit)
+          .sort({ createdAt: -1 })
           .toArray();
 
         const totalPages = Math.ceil(totalItems / limit);
@@ -1342,6 +1343,7 @@ async function run() {
       try {
         const result = await applyToTrainerCollection
           .find({ status: "pending" })
+          .sort({ createdAt: -1 })
           .toArray();
         res.status(200).json({
           success: true,
@@ -1355,9 +1357,23 @@ async function run() {
         });
       }
     });
-
-    //
-
+    app.get("/api/approved/trainers", verifyToken, async (req, res) => {
+      try {
+        const result = await applyToTrainerCollection
+          .find({ status: "approved" })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.status(200).json({
+          success: true,
+          data: result,
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
     // ─── Get application by ID ──
     app.get("/api/applyToTrainer/:id", verifyToken, async (req, res) => {
       try {
