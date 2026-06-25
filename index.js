@@ -35,100 +35,158 @@ async function run() {
     const favoriteClassesCollection = db.collection("favoriteClasses");
     const forumPostCollection = db.collection("forumPost");
     const commentsCollection = db.collection("forumComments");
+    const sessionCollection = db.collection("session");
 
+    // ─── Middlewares ──────────────────────────────────────────────────────────────
+    const verifyToken = async (req, res, next) => {
+      const authorizationHeader = req.headers.authorization;
+      if (!authorizationHeader) {
+        return res.status(401).json({ error: "Unauthorized access" });
+      }
+      const token = authorizationHeader.split(" ")[1];
+      if (!token) {
+        return res.status(401).json({ error: "Unauthorized access" });
+      }
+      try {
+        const session = await sessionCollection.findOne({ token });
+        if (!session)
+          return res.status(401).json({ error: "Unauthorized access" });
+
+        const user = await userCollection.findOne({
+          _id: new ObjectId(session.userId),
+        });
+        if (!user)
+          return res.status(401).json({ error: "Unauthorized access" });
+
+        req.user = user;
+        next();
+      } catch (error) {
+        res.status(401).json({ error: "Unauthorized access" });
+      }
+    };
+
+    const verifyAdmin = async (req, res, next) => {
+      const user = req.user;
+      if (user.role !== "admin") {
+        return res.status(403).json({ error: "Forbidden access" });
+      }
+      next();
+    };
+
+    const verifyTrainer = async (req, res, next) => {
+      const user = req.user;
+      if (user.role !== "trainer") {
+        return res.status(403).json({ error: "Forbidden access" });
+      }
+      next();
+    };
+
+    const verifyUser = async (req, res, next) => {
+      const user = req.user;
+      if (user.role !== "user") {
+        return res.status(403).json({ error: "Forbidden access" });
+      }
+      next();
+    };
+    console.log("verifyToken:", verifyToken);
     // API Routes
     // ── Health Check ──
     app.get("/", (req, res) => {
       res.json({ status: "running", message: "GymVortex API is live" });
     });
 
-    // ==========TRAINER SPECIFIC DASHBOARD METRICS (API Version 1 Strict Fixed)==============
-    app.get("/api/trainer/dashboard-metrics", async (req, res) => {
-      try {
-        const { email } = req.query;
+    // ==========TRAINER SPECIFIC DASHBOARD METRICS==============
+    app.get(
+      "/api/trainer/dashboard-metrics",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const { email } = req.query;
 
-        if (!email) {
-          return res.status(400).json({
-            success: false,
-            message: "Trainer email is required",
+          if (!email) {
+            return res.status(400).json({
+              success: false,
+              message: "Trainer email is required",
+            });
+          }
+
+          const trainerEmail = email.trim().toLowerCase();
+
+          // 1. All classes by this trainer
+          const myClasses = await classesCollection
+            .find({ trainerEmail })
+            .toArray();
+
+          const totalClasses = myClasses.length;
+          const myClassIds = myClasses.map((c) => c._id.toString());
+
+          // No classes yet — return zeros
+          if (myClassIds.length === 0) {
+            return res.status(200).json({
+              success: true,
+              data: {
+                totalStudents: 0,
+                totalClasses: 0,
+                totalEnrolled: 0,
+                bookingsTodayCount: 0,
+              },
+            });
+          }
+
+          // 2. FIXED: Unique students enrolled using aggregation ($group) instead of .distinct()
+          const uniqueStudentsResult = await bookingsCollection
+            .aggregate([
+              {
+                $match: {
+                  classId: { $in: myClassIds },
+                },
+              },
+              {
+                $group: {
+                  _id: "$userEmail", // Grouping by userEmail filters out duplicates automatically
+                },
+              },
+            ])
+            .toArray();
+
+          const totalStudents = uniqueStudentsResult.length;
+
+          // 3. Total enrolled (all bookings count)
+          const totalEnrolled = await bookingsCollection.countDocuments({
+            classId: { $in: myClassIds },
           });
-        }
 
-        const trainerEmail = email.trim().toLowerCase();
+          // 4. Bookings made today
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
 
-        // 1. All classes by this trainer
-        const myClasses = await classesCollection
-          .find({ trainerEmail })
-          .toArray();
+          const bookingsTodayCount = await bookingsCollection.countDocuments({
+            classId: { $in: myClassIds },
+            createdAt: { $gte: today },
+          });
 
-        const totalClasses = myClasses.length;
-        const myClassIds = myClasses.map((c) => c._id.toString());
-
-        // No classes yet — return zeros
-        if (myClassIds.length === 0) {
-          return res.status(200).json({
+          res.status(200).json({
             success: true,
             data: {
-              totalStudents: 0,
-              totalClasses: 0,
-              totalEnrolled: 0,
-              bookingsTodayCount: 0,
+              totalStudents,
+              totalClasses,
+              totalEnrolled,
+              bookingsTodayCount,
             },
           });
+        } catch (error) {
+          console.error("GET /api/trainer/dashboard-metrics error:", error);
+          res.status(500).json({
+            success: false,
+            message: "Internal server error",
+          });
         }
-
-        // 2. FIXED: Unique students enrolled using aggregation ($group) instead of .distinct()
-        const uniqueStudentsResult = await bookingsCollection
-          .aggregate([
-            {
-              $match: {
-                classId: { $in: myClassIds },
-              },
-            },
-            {
-              $group: {
-                _id: "$userEmail", // Grouping by userEmail filters out duplicates automatically
-              },
-            },
-          ])
-          .toArray();
-
-        const totalStudents = uniqueStudentsResult.length;
-
-        // 3. Total enrolled (all bookings count)
-        const totalEnrolled = await bookingsCollection.countDocuments({
-          classId: { $in: myClassIds },
-        });
-
-        // 4. Bookings made today
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const bookingsTodayCount = await bookingsCollection.countDocuments({
-          classId: { $in: myClassIds },
-          createdAt: { $gte: today },
-        });
-
-        res.status(200).json({
-          success: true,
-          data: {
-            totalStudents,
-            totalClasses,
-            totalEnrolled,
-            bookingsTodayCount,
-          },
-        });
-      } catch (error) {
-        console.error("GET /api/trainer/dashboard-metrics error:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
+      },
+    );
 
     // ============ USER DASHBOARD OVERVIEW METRICS =============
-    app.get("/api/user/overview-metrics", async (req, res) => {
+    app.get("/api/user/overview-metrics", verifyToken, async (req, res) => {
       try {
         const { email } = req.query;
 
@@ -212,103 +270,109 @@ async function run() {
       }
     });
     // ==================== UPDATE USER STREAK & RANK AUTOMATICALLY ====================
-    app.put("/api/user/update-activity", async (req, res) => {
-      try {
-        const { email } = req.body;
+    app.put(
+      "/api/user/update-activity",
+      verifyToken,
 
-        if (!email) {
-          return res.status(400).json({
-            success: false,
-            message: "User email is required",
-          });
-        }
+      async (req, res) => {
+        try {
+          const { email } = req.body;
 
-        const normalizedEmail = email.trim().toLowerCase();
+          if (!email) {
+            return res.status(400).json({
+              success: false,
+              message: "User email is required",
+            });
+          }
 
-        const user = await userCollection.findOne({ email: normalizedEmail });
-        if (!user) {
-          return res.status(404).json({
-            success: false,
-            message: "User not found",
-          });
-        }
+          const normalizedEmail = email.trim().toLowerCase();
 
-        const now = new Date();
-        const todayStr = now.toISOString().split("T")[0]; // "2026-06-24"
+          const user = await userCollection.findOne({ email: normalizedEmail });
+          if (!user) {
+            return res.status(404).json({
+              success: false,
+              message: "User not found",
+            });
+          }
 
-        const lastCheckIn = user.lastActiveDate
-          ? new Date(user.lastActiveDate).toISOString().split("T")[0]
-          : null;
+          const now = new Date();
+          const todayStr = now.toISOString().split("T")[0]; // "2026-06-24"
 
-        const currentStreak = typeof user.streak === "number" ? user.streak : 0;
+          const lastCheckIn = user.lastActiveDate
+            ? new Date(user.lastActiveDate).toISOString().split("T")[0]
+            : null;
 
-        // Already visited today — return without touching DB
-        if (lastCheckIn === todayStr) {
+          const currentStreak =
+            typeof user.streak === "number" ? user.streak : 0;
+
+          // Already visited today — return without touching DB
+          if (lastCheckIn === todayStr) {
+            return res.status(200).json({
+              success: true,
+              message: "Activity already recorded today",
+              streak: currentStreak,
+              rank: user.rank || "RECRUIT",
+            });
+          }
+
+          // Calculate new streak
+          let newStreak;
+          if (!lastCheckIn) {
+            newStreak = 1; // First ever check-in
+          } else {
+            const diffDays = Math.round(
+              (new Date(todayStr) - new Date(lastCheckIn)) /
+                (1000 * 60 * 60 * 24),
+            );
+            newStreak = diffDays === 1 ? currentStreak + 1 : 1;
+          }
+
+          // Rank thresholds
+          let newRank = "RECRUIT";
+          if (newStreak >= 30) newRank = "TITAN II";
+          else if (newStreak >= 15) newRank = "PRO ATHLETE";
+          else if (newStreak >= 5) newRank = "WARRIOR";
+
+          // Simple updateOne — no findOneAndUpdate complexity
+          const updateResult = await userCollection.updateOne(
+            { email: normalizedEmail },
+            {
+              $set: {
+                streak: newStreak,
+                rank: newRank,
+                lastActiveDate: now,
+              },
+            },
+          );
+
+          console.log("Activity update result:", updateResult);
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(500).json({
+              success: false,
+              message: "Database update failed — document not modified",
+            });
+          }
+
           return res.status(200).json({
             success: true,
-            message: "Activity already recorded today",
-            streak: currentStreak,
-            rank: user.rank || "RECRUIT",
+            message: "Streak and rank updated successfully",
+            streak: newStreak,
+            rank: newRank,
           });
-        }
-
-        // Calculate new streak
-        let newStreak;
-        if (!lastCheckIn) {
-          newStreak = 1; // First ever check-in
-        } else {
-          const diffDays = Math.round(
-            (new Date(todayStr) - new Date(lastCheckIn)) /
-              (1000 * 60 * 60 * 24),
-          );
-          newStreak = diffDays === 1 ? currentStreak + 1 : 1;
-        }
-
-        // Rank thresholds
-        let newRank = "RECRUIT";
-        if (newStreak >= 30) newRank = "TITAN II";
-        else if (newStreak >= 15) newRank = "PRO ATHLETE";
-        else if (newStreak >= 5) newRank = "WARRIOR";
-
-        // Simple updateOne — no findOneAndUpdate complexity
-        const updateResult = await userCollection.updateOne(
-          { email: normalizedEmail },
-          {
-            $set: {
-              streak: newStreak,
-              rank: newRank,
-              lastActiveDate: now,
-            },
-          },
-        );
-
-        console.log("Activity update result:", updateResult);
-
-        if (updateResult.modifiedCount === 0) {
+        } catch (error) {
+          console.error("Error updating user activity:", error);
           return res.status(500).json({
             success: false,
-            message: "Database update failed — document not modified",
+            message: "Internal server error",
           });
         }
-
-        return res.status(200).json({
-          success: true,
-          message: "Streak and rank updated successfully",
-          streak: newStreak,
-          rank: newRank,
-        });
-      } catch (error) {
-        console.error("Error updating user activity:", error);
-        return res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
+      },
+    );
 
     // ===============ADMIN RELATED ROUTES=================
 
-    app.get("/api/admin/user", async (req, res) => {
+    app.get("/api/admin/user", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -349,225 +413,254 @@ async function run() {
       }
     });
 
-    app.get("/api/admin/user/manage", async (req, res) => {
-      try {
-        const { id } = req.query;
-        const { bannedStatus } = req.query;
+    app.get(
+      "/api/admin/user/manage",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.query;
+          const { bannedStatus } = req.query;
 
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              banned: bannedStatus,
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                banned: bannedStatus,
+              },
             },
-          },
-        );
-        if (result.modifiedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "User not found or no changes made",
-          });
-        }
-        res.status(200).json({
-          success: true,
-          message: `User ${bannedStatus ? "blocked" : "unblocked"} successfully`,
-        });
-      } catch (error) {
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
-
-    app.get("/api/admin/manage/trainers", async (req, res) => {
-      const { page = 1, limit = 10, search, role } = req.query;
-      const skip = (page - 1) * limit;
-
-      let query = {};
-      if (search) {
-        query.fullName = { $regex: search, $options: "i" };
-      }
-      if (role) {
-        query.specialty = role;
-      }
-
-      const total = await trainersCollection.countDocuments(query);
-      const data = await trainersCollection
-        .find(query)
-        .skip(skip)
-        .limit(parseInt(limit))
-        .sort({ createdAt: -1 })
-        .toArray();
-
-      res.send({
-        data,
-        totalPages: Math.ceil(total / limit),
-        currentPage: parseInt(page),
-      });
-    });
-
-    app.patch("/api/admin/user/block/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { banned } = req.body;
-
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              banned: banned,
-              ...(banned && {
-                blockedUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-              }),
-            },
-            ...(!banned && { $unset: { blockedUntil: "" } }),
-          },
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "User not found",
-          });
-        }
-
-        res.status(200).json({
-          success: true,
-          message: `User ${banned ? "blocked" : "unblocked"} successfully`,
-        });
-      } catch (error) {
-        console.error("Block error:", error);
-        res
-          .status(500)
-          .json({ success: false, message: "Internal server error" });
-      }
-    });
-
-    app.patch("/api/admin/user/make-admin/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid user ID",
-          });
-        }
-
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role: "admin" } },
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "User not found",
-          });
-        }
-
-        res.status(200).json({
-          success: true,
-          message: "User promoted to admin successfully",
-        });
-      } catch (error) {
-        console.error("Make admin error:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
-
-    app.patch("/api/admin/update/trainer/action/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { status, adminFeedback, userEmail } = req.body;
-
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid application ID format",
-          });
-        }
-
-        const result = await applyToTrainerCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status, adminFeedback } },
-        );
-
-        if (result.modifiedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "Application not found",
-          });
-        }
-
-        if (status === "approved") {
-          await userCollection.updateOne(
-            { email: userEmail },
-            { $set: { role: "trainer" } },
           );
-        }
-
-        res.status(200).json({
-          success: true,
-          message: `Trainer application ${status} successfully`,
-        });
-      } catch (error) {
-        console.error("Trainer action error:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
-
-    app.patch("/api/admin/demote/trainer", async (req, res) => {
-      try {
-        const { email } = req.body;
-
-        if (!email) {
-          return res.status(400).json({
-            success: false,
-            message: "Email is required",
-          });
-        }
-
-        const result = await userCollection.updateOne(
-          { email: email.trim().toLowerCase() },
-          { $set: { role: "user" } },
-        );
-
-        // User খুঁজে পাওয়া যায়নি
-        if (result.matchedCount === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "User not found",
-          });
-        }
-
-        // Already user role — still success
-        if (result.modifiedCount === 0) {
-          return res.status(200).json({
+          if (result.modifiedCount === 0) {
+            return res.status(404).json({
+              success: false,
+              message: "User not found or no changes made",
+            });
+          }
+          res.status(200).json({
             success: true,
-            message: "User was already a regular user",
+            message: `User ${bannedStatus ? "blocked" : "unblocked"} successfully`,
+          });
+        } catch (error) {
+          res.status(500).json({
+            success: false,
+            message: "Internal server error",
           });
         }
+      },
+    );
 
-        res.status(200).json({
-          success: true,
-          message: "Trainer demoted successfully",
+    app.get(
+      "/api/admin/manage/trainers",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { page = 1, limit = 10, search, role } = req.query;
+        const skip = (page - 1) * limit;
+
+        let query = {};
+        if (search) {
+          query.fullName = { $regex: search, $options: "i" };
+        }
+        if (role) {
+          query.specialty = role;
+        }
+
+        const total = await userCollection.countDocuments(query);
+        const data = await userCollection
+          .find(query)
+          .skip(skip)
+          .limit(parseInt(limit))
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send({
+          data,
+          totalPages: Math.ceil(total / limit),
+          currentPage: parseInt(page),
         });
-      } catch (error) {
-        console.error("Demote trainer error:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
+      },
+    );
+
+    app.patch(
+      "/api/admin/user/block/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { banned } = req.body;
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                banned: banned,
+                ...(banned && {
+                  blockedUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                }),
+              },
+              ...(!banned && { $unset: { blockedUntil: "" } }),
+            },
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          res.status(200).json({
+            success: true,
+            message: `User ${banned ? "blocked" : "unblocked"} successfully`,
+          });
+        } catch (error) {
+          console.error("Block error:", error);
+          res
+            .status(500)
+            .json({ success: false, message: "Internal server error" });
+        }
+      },
+    );
+    app.patch(
+      "/api/admin/user/make-admin/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({
+              success: false,
+              message: "Invalid user ID",
+            });
+          }
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "admin" } },
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          res.status(200).json({
+            success: true,
+            message: "User promoted to admin successfully",
+          });
+        } catch (error) {
+          console.error("Make admin error:", error);
+          res.status(500).json({
+            success: false,
+            message: "Internal server error",
+          });
+        }
+      },
+    );
+
+    app.patch(
+      "/api/admin/update/trainer/action/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status, adminFeedback, userEmail } = req.body;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({
+              success: false,
+              message: "Invalid application ID format",
+            });
+          }
+
+          const result = await applyToTrainerCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status, adminFeedback } },
+          );
+
+          if (result.modifiedCount === 0) {
+            return res.status(404).json({
+              success: false,
+              message: "Application not found",
+            });
+          }
+
+          if (status === "approved") {
+            await userCollection.updateOne(
+              { email: userEmail },
+              { $set: { role: "trainer" } },
+            );
+          }
+
+          res.status(200).json({
+            success: true,
+            message: `Trainer application ${status} successfully`,
+          });
+        } catch (error) {
+          console.error("Trainer action error:", error);
+          res.status(500).json({
+            success: false,
+            message: "Internal server error",
+          });
+        }
+      },
+    );
+
+    app.patch(
+      "/api/admin/demote/trainer",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { email } = req.body;
+
+          if (!email) {
+            return res.status(400).json({
+              success: false,
+              message: "Email is required",
+            });
+          }
+
+          const result = await userCollection.updateOne(
+            { email: email.trim().toLowerCase() },
+            { $set: { role: "user" } },
+          );
+
+          // User খুঁজে পাওয়া যায়নি
+          if (result.matchedCount === 0) {
+            return res.status(404).json({
+              success: false,
+              message: "User not found",
+            });
+          }
+
+          // Already user role — still success
+          if (result.modifiedCount === 0) {
+            return res.status(200).json({
+              success: true,
+              message: "User was already a regular user",
+            });
+          }
+
+          res.status(200).json({
+            success: true,
+            message: "Trainer demoted successfully",
+          });
+        } catch (error) {
+          console.error("Demote trainer error:", error);
+          res.status(500).json({
+            success: false,
+            message: "Internal server error",
+          });
+        }
+      },
+    );
     // ================CLASSES RELATED ROUTES=================
 
     app.get("/api/classes", async (req, res) => {
@@ -696,43 +789,48 @@ async function run() {
       }
     });
 
-    app.get("/api/trainer/class", async (req, res) => {
-      try {
-        const { email, search } = req.query;
+    app.get(
+      "/api/trainer/class",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const { email, search } = req.query;
 
-        if (!email) {
-          return res.status(400).json({
+          if (!email) {
+            return res.status(400).json({
+              success: false,
+              message: "Trainer email is required",
+            });
+          }
+          let query = { trainerEmail: email };
+          if (search && search.trim() !== "") {
+            query.$or = [
+              { title: { $regex: search, $options: "i" } },
+              { category: { $regex: search, $options: "i" } },
+            ];
+          }
+
+          const result = await classesCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.status(200).json({
+            success: true,
+            count: result.length,
+            data: result,
+          });
+        } catch (error) {
+          console.error("GET /api/trainer/class error:", error);
+          res.status(500).json({
             success: false,
-            message: "Trainer email is required",
+            message: "Internal server error",
           });
         }
-        let query = { trainerEmail: email };
-        if (search && search.trim() !== "") {
-          query.$or = [
-            { title: { $regex: search, $options: "i" } },
-            { category: { $regex: search, $options: "i" } },
-          ];
-        }
+      },
+    );
 
-        const result = await classesCollection
-          .find(query)
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.status(200).json({
-          success: true,
-          count: result.length,
-          data: result,
-        });
-      } catch (error) {
-        console.error("GET /api/trainer/class error:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
-
-    app.post("/api/classes", async (req, res) => {
+    app.post("/api/classes", verifyToken, async (req, res) => {
       try {
         const classData = req.body;
         // validation
@@ -760,7 +858,7 @@ async function run() {
       }
     });
 
-    app.put("/api/classes/:id", async (req, res) => {
+    app.put("/api/classes/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const classData = req.body;
@@ -791,7 +889,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/classes/:id", async (req, res) => {
+    app.patch("/api/classes/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const { status } = req.body;
@@ -809,7 +907,7 @@ async function run() {
         }
       } catch (error) {}
     });
-    app.delete("/api/classes/:id", async (req, res) => {
+    app.delete("/api/classes/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const result = await classesCollection.deleteOne({
@@ -829,26 +927,33 @@ async function run() {
           .json({ success: false, message: "Error deleting class" });
       }
     });
-    app.delete("/api/trainer/class/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const result = await classesCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
-        if (result.deletedCount === 1) {
+    app.delete(
+      "/api/trainer/class/:id",
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await classesCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+          if (result.deletedCount === 1) {
+            res
+              .status(200)
+              .json({ success: true, message: "Class deleted successfully" });
+          } else {
+            res
+              .status(404)
+              .json({ success: false, message: "Class not found" });
+          }
+        } catch (error) {
+          console.error("Error deleting class:", error);
           res
-            .status(200)
-            .json({ success: true, message: "Class deleted successfully" });
-        } else {
-          res.status(404).json({ success: false, message: "Class not found" });
+            .status(500)
+            .json({ success: false, message: "Error deleting class" });
         }
-      } catch (error) {
-        console.error("Error deleting class:", error);
-        res
-          .status(500)
-          .json({ success: false, message: "Error deleting class" });
-      }
-    });
+      },
+    );
 
     // ===========BOOKINGS RELATED ROUTES=============
     //ADD NEW BOOKING
@@ -904,7 +1009,7 @@ async function run() {
     });
 
     // ── GET Booking Class by email ──
-    app.get("/api/bookings", async (req, res) => {
+    app.get("/api/bookings", verifyToken, async (req, res) => {
       try {
         const { email } = req.query;
 
@@ -935,7 +1040,7 @@ async function run() {
       }
     });
 
-    app.get("/api/transactions", async (req, res) => {
+    app.get("/api/transactions", verifyToken, async (req, res) => {
       try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -975,7 +1080,7 @@ async function run() {
       }
     });
     //  GET BOOKING BY CLASS ID
-    app.get("/api/bookings/classId", async (req, res) => {
+    app.get("/api/bookings/classId", verifyToken, async (req, res) => {
       try {
         const { classId } = req.query;
         if (!classId) {
@@ -1000,7 +1105,7 @@ async function run() {
     });
 
     //  ──── CHECK BOOKING CLASS ────
-    app.get("/api/bookings/check", async (req, res) => {
+    app.get("/api/bookings/check", verifyToken, async (req, res) => {
       try {
         const { userEmail, classId } = req.query;
         if (!userEmail || !classId) {
@@ -1022,7 +1127,7 @@ async function run() {
 
     // =================FAVORITE RELATED ROUTES=================
     // ──── ADD FAVORITE CLASSES  ────
-    app.post("/api/favoriteClasses", async (req, res) => {
+    app.post("/api/favoriteClasses", verifyToken, async (req, res) => {
       try {
         const favoriteData = req.body;
         const { userEmail, classId } = favoriteData; // Extract userEmail and classId from the request body
@@ -1070,7 +1175,7 @@ async function run() {
     });
 
     // ─── GET Favorite Classes by email ──
-    app.get("/api/favoriteClasses", async (req, res) => {
+    app.get("/api/favoriteClasses", verifyToken, async (req, res) => {
       try {
         const { email } = req.query;
 
@@ -1102,7 +1207,7 @@ async function run() {
     });
 
     // Check if user already favorited a class
-    app.get("/api/favoriteClasses/check", async (req, res) => {
+    app.get("/api/favoriteClasses/check", verifyToken, async (req, res) => {
       try {
         const { userEmail, classId } = req.query;
         if (!userEmail || !classId) {
@@ -1123,7 +1228,7 @@ async function run() {
     });
 
     // DELETE Favorite Class
-    app.delete("/api/favoriteClasses/:id", async (req, res) => {
+    app.delete("/api/favoriteClasses/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
 
@@ -1161,54 +1266,60 @@ async function run() {
 
     // ===================TRAINER RELATED ROUTES============
     // ── Apply to Trainer ──
-    app.post("/api/applyToTrainer", async (req, res) => {
-      try {
-        const data = req.body;
-        const { userEmail } = data;
+    app.post(
+      "/api/applyToTrainer",
+      verifyToken,
+      verifyUser,
+      async (req, res) => {
+        try {
+          const data = req.body;
+          const { userEmail } = data;
 
-        if (!userEmail) {
-          return res.status(400).json({
+          if (!userEmail) {
+            return res.status(400).json({
+              success: false,
+              message: "User email is required",
+            });
+          }
+
+          const existing = await applyToTrainerCollection.findOne({
+            userEmail,
+            status: "pending",
+          });
+
+          if (existing) {
+            return res.status(409).json({
+              success: false,
+              message: "You already have a pending application",
+            });
+          }
+
+          const newApplication = {
+            ...data,
+            status: "pending",
+            adminFeedback: "",
+            appliedAt: new Date(),
+          };
+
+          const result =
+            await applyToTrainerCollection.insertOne(newApplication);
+
+          res.status(201).json({
+            success: true,
+            message: "Application submitted successfully",
+            data: result,
+          });
+        } catch (error) {
+          console.error("Error applying to trainer:", error);
+          res.status(500).json({
             success: false,
-            message: "User email is required",
+            message: "Internal server error",
           });
         }
-
-        const existing = await applyToTrainerCollection.findOne({
-          userEmail,
-          status: "pending",
-        });
-
-        if (existing) {
-          return res.status(409).json({
-            success: false,
-            message: "You already have a pending application",
-          });
-        }
-
-        const newApplication = {
-          ...data,
-          status: "pending",
-          adminFeedback: "",
-          appliedAt: new Date(),
-        };
-
-        const result = await applyToTrainerCollection.insertOne(newApplication);
-
-        res.status(201).json({
-          success: true,
-          message: "Application submitted successfully",
-          data: result,
-        });
-      } catch (error) {
-        console.error("Error applying to trainer:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
-      }
-    });
+      },
+    );
     // ─── Get all applications ──
-    app.get("/api/applyToTrainer", async (req, res) => {
+    app.get("/api/applyToTrainer", verifyToken, async (req, res) => {
       try {
         const result = await applyToTrainerCollection
           .find({ status: "pending" })
@@ -1227,7 +1338,7 @@ async function run() {
     });
 
     // ─── Get application by ID ──
-    app.get("/api/applyToTrainer/:id", async (req, res) => {
+    app.get("/api/applyToTrainer/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
 
@@ -1267,7 +1378,7 @@ async function run() {
 
     // ─── FORUM POST RELATED ROUTES ───
     //  FORUM POST
-    app.post("/api/forumPost", async (req, res) => {
+    app.post("/api/forumPost", verifyToken, async (req, res) => {
       try {
         const data = req.body;
         const result = await forumPostCollection.insertOne({
@@ -1275,6 +1386,7 @@ async function run() {
           likes: [],
           dislikes: [],
           commentsCount: 0,
+          views: 0,
           createdAt: new Date(),
         });
         res.status(201).json({
@@ -1292,7 +1404,7 @@ async function run() {
     });
 
     // GET ALL FORUM POSTS WITH PAGINATION, SEARCH, AND FILTER
-    app.get("/api/forumPost", async (req, res) => {
+    app.get("/api/forumPost", verifyToken, async (req, res) => {
       try {
         const { page = 1, limit = 10, search, role } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -1339,7 +1451,7 @@ async function run() {
     });
 
     // GET TRAINER FORUM POST WITH SEARCH AND PAGINATION
-    app.get("/api/myForumPosts", async (req, res) => {
+    app.get("/api/myForumPosts", verifyToken, async (req, res) => {
       try {
         const { email, page = 1, limit = 9, search = "" } = req.query;
         if (!email) {
@@ -1384,12 +1496,16 @@ async function run() {
       }
     });
     // GET FORUM BY ID
-    app.get("/api/forumPost/:id", async (req, res) => {
+    app.get("/api/forumPost/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const result = await forumPostCollection.findOne({
           _id: new ObjectId(id),
         });
+        await forumPostCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { views: 1 } },
+        );
         if (!result) {
           return res.status(404).json({
             success: false,
@@ -1472,7 +1588,7 @@ async function run() {
 
     // ===== FORUM COMMENT RELATED ROUTES =====
     // ADD A NEW COMMENT
-    app.post("/api/comments", async (req, res) => {
+    app.post("/api/comments", verifyToken, async (req, res) => {
       try {
         const { postId, userId, content, authorName, authorImage } = req.body;
         const newComment = {
@@ -1485,6 +1601,14 @@ async function run() {
           createdAt: new Date(),
         };
         const result = await commentsCollection.insertOne(newComment);
+        await forumPostCollection.updateOne(
+          { _id: new ObjectId(postId) },
+          {
+            $inc: {
+              commentsCount: 1,
+            },
+          },
+        );
         res.status(201).json({ success: true, data: result });
       } catch (error) {
         res
@@ -1493,32 +1617,36 @@ async function run() {
       }
     });
     // ADD A REPLY TO A COMMENT
-    app.post("/api/comments/:commentId/reply", async (req, res) => {
-      try {
-        const { commentId } = req.params;
-        const { userId, content, authorName, authorImage } = req.body;
-        const reply = {
-          replyId: new ObjectId(),
-          userId: new ObjectId(userId),
-          content,
-          authorName,
-          authorImage,
-          createdAt: new Date(),
-        };
+    app.post(
+      "/api/comments/:commentId/reply",
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { commentId } = req.params;
+          const { userId, content, authorName, authorImage } = req.body;
+          const reply = {
+            replyId: new ObjectId(),
+            userId: new ObjectId(userId),
+            content,
+            authorName,
+            authorImage,
+            createdAt: new Date(),
+          };
 
-        await commentsCollection.updateOne(
-          { _id: new ObjectId(commentId) },
-          { $push: { replies: reply } },
-        );
-        res
-          .status(200)
-          .json({ success: true, message: "Reply added successfully" });
-      } catch (error) {
-        res
-          .status(500)
-          .json({ success: false, message: "Failed to add reply" });
-      }
-    });
+          await commentsCollection.updateOne(
+            { _id: new ObjectId(commentId) },
+            { $push: { replies: reply } },
+          );
+          res
+            .status(200)
+            .json({ success: true, message: "Reply added successfully" });
+        } catch (error) {
+          res
+            .status(500)
+            .json({ success: false, message: "Failed to add reply" });
+        }
+      },
+    );
 
     // EDIT A COMMENT
     app.put("/api/comments/:commentId", async (req, res) => {
@@ -1536,13 +1664,48 @@ async function run() {
     });
 
     // DELETE A COMMENT OR REPLY
+    // DELETE A COMMENT
     app.delete("/api/comments/:commentId", async (req, res) => {
       try {
         const { commentId } = req.params;
-        await commentsCollection.deleteOne({ _id: new ObjectId(commentId) });
-        res.status(200).json({ success: true, message: "Comment deleted" });
+
+        const comment = await commentsCollection.findOne({
+          _id: new ObjectId(commentId),
+        });
+
+        if (!comment) {
+          return res.status(404).json({
+            success: false,
+            message: "Comment not found",
+          });
+        }
+
+        await commentsCollection.deleteOne({
+          _id: new ObjectId(commentId),
+        });
+
+        await forumPostCollection.updateOne(
+          {
+            _id: new ObjectId(comment.postId),
+          },
+          {
+            $inc: {
+              commentsCount: -1,
+            },
+          },
+        );
+
+        res.status(200).json({
+          success: true,
+          message: "Comment deleted",
+        });
       } catch (error) {
-        res.status(500).json({ success: false, message: "Delete failed" });
+        console.log(error);
+
+        res.status(500).json({
+          success: false,
+          message: "Delete failed",
+        });
       }
     });
     // ===== GET ALL COMMENTS FOR A POST========
@@ -1636,6 +1799,166 @@ async function run() {
       }
     });
 
+    // LIKE A POST
+    app.patch("/api/forumPost/:id/like", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const { userId, name, email, image } = req.body;
+
+        const post = await forumPostCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!post) {
+          return res.status(404).json({
+            success: false,
+            message: "Post not found",
+          });
+        }
+
+        const alreadyLiked = post.likes?.some((user) => user.email === email);
+
+        if (alreadyLiked) {
+          await forumPostCollection.updateOne(
+            {
+              _id: new ObjectId(id),
+            },
+            {
+              $pull: {
+                likes: {
+                  email: email,
+                },
+              },
+            },
+          );
+        } else {
+          await forumPostCollection.updateOne(
+            {
+              _id: new ObjectId(id),
+            },
+            {
+              $addToSet: {
+                likes: {
+                  userId,
+                  name,
+                  email,
+                  image,
+                },
+              },
+              $pull: {
+                dislikes: {
+                  email: email,
+                },
+              },
+            },
+          );
+        }
+
+        const updatedPost = await forumPostCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        res.json({
+          success: true,
+          likes: updatedPost.likes,
+          dislikes: updatedPost.dislikes,
+        });
+      } catch (error) {
+        console.log(error);
+
+        res.status(500).json({
+          success: false,
+          message: "Like failed",
+        });
+      }
+    });
+
+    // DISLIKE A POST
+    app.patch("/api/forumPost/:id/dislike", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const { userId, name, email, image } = req.body;
+
+        const post = await forumPostCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!post) {
+          return res.status(404).json({
+            success: false,
+            message: "Post not found",
+          });
+        }
+
+        const alreadyDisliked = post.dislikes?.some(
+          (user) => user.email === email,
+        );
+
+        if (alreadyDisliked) {
+          // remove dislike
+
+          await forumPostCollection.updateOne(
+            {
+              _id: new ObjectId(id),
+            },
+            {
+              $pull: {
+                dislikes: {
+                  email: email,
+                },
+              },
+            },
+          );
+        } else {
+          // add dislike + remove like
+
+          await forumPostCollection.updateOne(
+            {
+              _id: new ObjectId(id),
+            },
+            {
+              $addToSet: {
+                dislikes: {
+                  userId,
+                  name,
+                  email,
+                  image,
+                },
+              },
+
+              $pull: {
+                likes: {
+                  email: email,
+                },
+              },
+            },
+          );
+        }
+
+        const updatedPost = await forumPostCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        res.json({
+          success: true,
+
+          action: alreadyDisliked ? "undisliked" : "disliked",
+
+          likes: updatedPost.likes,
+
+          dislikes: updatedPost.dislikes,
+        });
+      } catch (error) {
+        console.log(error);
+
+        res.status(500).json({
+          success: false,
+          message: "Dislike failed",
+        });
+      }
+    });
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
