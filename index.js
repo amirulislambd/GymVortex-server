@@ -1471,7 +1471,7 @@ async function run() {
     });
 
     // ===== FORUM COMMENT RELATED ROUTES =====
-
+    // ADD A NEW COMMENT
     app.post("/api/comments", async (req, res) => {
       try {
         const { postId, userId, content, authorName, authorImage } = req.body;
@@ -1492,7 +1492,33 @@ async function run() {
           .json({ success: false, message: "Failed to add comment" });
       }
     });
+    // ADD A REPLY TO A COMMENT
+    app.post("/api/comments/:commentId/reply", async (req, res) => {
+      try {
+        const { commentId } = req.params;
+        const { userId, content, authorName, authorImage } = req.body;
+        const reply = {
+          replyId: new ObjectId(),
+          userId: new ObjectId(userId),
+          content,
+          authorName,
+          authorImage,
+          createdAt: new Date(),
+        };
 
+        await commentsCollection.updateOne(
+          { _id: new ObjectId(commentId) },
+          { $push: { replies: reply } },
+        );
+        res
+          .status(200)
+          .json({ success: true, message: "Reply added successfully" });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, message: "Failed to add reply" });
+      }
+    });
 
     // ── Server Start ──
     app.listen(port, () => {
