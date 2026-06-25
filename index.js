@@ -849,7 +849,7 @@ async function run() {
       }
     });
 
-    // ==================BOOKINGS RELATED ROUTES=================
+    // ===========BOOKINGS RELATED ROUTES================
     //ADD NEW BOOKING
     app.post("/api/bookings", async (req, res) => {
       try {
@@ -931,6 +931,46 @@ async function run() {
           message: "Error fetching bookings",
           error: error.message,
         });
+      }
+    });
+
+    app.get("/api/transactions", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const totalItems = await bookingsCollection.countDocuments();
+        const totalPages = Math.ceil(totalItems / limit);
+
+        const transactions = await bookingsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        // Stats
+        const totalRevenue = await bookingsCollection
+          .aggregate([
+            { $group: { _id: null, total: { $sum: "$priceAmount" } } },
+          ])
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          data: transactions,
+          pagination: { totalItems, totalPages, currentPage: page, limit },
+          stats: {
+            totalRevenue: totalRevenue[0]?.total || 0,
+            totalTransactions: totalItems,
+          },
+        });
+      } catch (error) {
+        console.error("GET /api/transactions error:", error);
+        res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
       }
     });
     //  GET BOOKING BY CLASS ID
@@ -1380,6 +1420,7 @@ async function run() {
         });
       }
     });
+
     // ── Server Start ──
     app.listen(port, () => {
       console.log(` Server running on port ${port}`);
