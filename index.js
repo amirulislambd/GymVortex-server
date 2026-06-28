@@ -358,34 +358,46 @@ async function run() {
                 totalClasses: 0,
                 totalEnrolled: 0,
                 bookingsTodayCount: 0,
+                students: [],
               },
             });
           }
 
-          // 2. FIXED: Unique students enrolled using aggregation ($group) instead of .distinct()
+          // 2. Unique student emails
           const uniqueStudentsResult = await bookingsCollection
             .aggregate([
-              {
-                $match: {
-                  classId: { $in: myClassIds },
-                },
-              },
-              {
-                $group: {
-                  _id: "$userEmail", // Grouping by userEmail filters out duplicates automatically
-                },
-              },
+              { $match: { classId: { $in: myClassIds } } },
+              { $group: { _id: "$userEmail" } },
             ])
             .toArray();
 
           const totalStudents = uniqueStudentsResult.length;
+          const uniqueEmails = uniqueStudentsResult.map((s) => s._id);
 
-          // 3. Total enrolled (all bookings count)
+          // 3. ── Fetch full student data from userCollection ──
+          const students = await userCollection
+            .find(
+              { email: { $in: uniqueEmails } },
+              {
+                projection: {
+                  _id: 1,
+                  name: 1,
+                  email: 1,
+                  image: 1,
+                  streak: 1,
+                  rank: 1,
+                  createdAt: 1,
+                },
+              },
+            )
+            .toArray();
+
+          // 4. Total enrolled (all bookings count)
           const totalEnrolled = await bookingsCollection.countDocuments({
             classId: { $in: myClassIds },
           });
 
-          // 4. Bookings made today
+          // 5. Bookings made today
           const today = new Date();
           today.setHours(0, 0, 0, 0);
 
@@ -401,6 +413,7 @@ async function run() {
               totalClasses,
               totalEnrolled,
               bookingsTodayCount,
+              students, // ← full student objects
             },
           });
         } catch (error) {
@@ -497,106 +510,177 @@ async function run() {
           .json({ success: false, message: "Internal server error" });
       }
     });
-    // ==================== UPDATE USER STREAK & RANK AUTOMATICALLY ====================
-    app.put(
-      "/api/user/update-activity",
-      verifyToken,
+    // ==================== USER UPDATE ACTIVITY ====================
+    app.put("/api/user/update-activity", verifyToken, async (req, res) => {
+      try {
+        const { email } = req.body;
 
-      async (req, res) => {
-        try {
-          const { email } = req.body;
-
-          if (!email) {
-            return res.status(400).json({
-              success: false,
-              message: "User email is required",
-            });
-          }
-
-          const normalizedEmail = email.trim().toLowerCase();
-
-          const user = await userCollection.findOne({ email: normalizedEmail });
-          if (!user) {
-            return res.status(404).json({
-              success: false,
-              message: "User not found",
-            });
-          }
-
-          const now = new Date();
-          const todayStr = now.toISOString().split("T")[0]; // "2026-06-24"
-
-          const lastCheckIn = user.lastActiveDate
-            ? new Date(user.lastActiveDate).toISOString().split("T")[0]
-            : null;
-
-          const currentStreak =
-            typeof user.streak === "number" ? user.streak : 0;
-
-          // Already visited today — return without touching DB
-          if (lastCheckIn === todayStr) {
-            return res.status(200).json({
-              success: true,
-              message: "Activity already recorded today",
-              streak: currentStreak,
-              rank: user.rank || "RECRUIT",
-            });
-          }
-
-          // Calculate new streak
-          let newStreak;
-          if (!lastCheckIn) {
-            newStreak = 1; // First ever check-in
-          } else {
-            const diffDays = Math.round(
-              (new Date(todayStr) - new Date(lastCheckIn)) /
-                (1000 * 60 * 60 * 24),
-            );
-            newStreak = diffDays === 1 ? currentStreak + 1 : 1;
-          }
-
-          // Rank thresholds
-          let newRank = "RECRUIT";
-          if (newStreak >= 30) newRank = "TITAN II";
-          else if (newStreak >= 15) newRank = "PRO ATHLETE";
-          else if (newStreak >= 5) newRank = "WARRIOR";
-
-          // Simple updateOne — no findOneAndUpdate complexity
-          const updateResult = await userCollection.updateOne(
-            { email: normalizedEmail },
-            {
-              $set: {
-                streak: newStreak,
-                rank: newRank,
-                lastActiveDate: now,
-              },
-            },
-          );
-
-          console.log("Activity update result:", updateResult);
-
-          if (updateResult.modifiedCount === 0) {
-            return res.status(500).json({
-              success: false,
-              message: "Database update failed — document not modified",
-            });
-          }
-
-          return res.status(200).json({
-            success: true,
-            message: "Streak and rank updated successfully",
-            streak: newStreak,
-            rank: newRank,
-          });
-        } catch (error) {
-          console.error("Error updating user activity:", error);
-          return res.status(500).json({
+        if (!email) {
+          return res.status(400).json({
             success: false,
-            message: "Internal server error",
+            message: "User email is required",
           });
         }
-      },
-    );
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const user = await userCollection.findOne({ email: normalizedEmail });
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        const now = new Date();
+        const todayStr = now.toISOString().split("T")[0]; // "2026-06-24"
+
+        const lastCheckIn = user.lastActiveDate
+          ? new Date(user.lastActiveDate).toISOString().split("T")[0]
+          : null;
+
+        const currentStreak = typeof user.streak === "number" ? user.streak : 0;
+
+        // Already visited today — return without touching DB
+        if (lastCheckIn === todayStr) {
+          return res.status(200).json({
+            success: true,
+            message: "Activity already recorded today",
+            streak: currentStreak,
+            rank: user.rank || "RECRUIT",
+          });
+        }
+
+        // ✅ Fix: force UTC midnight for both dates to avoid timezone drift
+        let newStreak;
+        if (!lastCheckIn) {
+          newStreak = 1; // First ever check-in
+        } else {
+          const lastDate = new Date(lastCheckIn + "T00:00:00.000Z");
+          const todayDate = new Date(todayStr + "T00:00:00.000Z");
+          const diffDays = Math.round(
+            (todayDate - lastDate) / (1000 * 60 * 60 * 24),
+          );
+          newStreak = diffDays === 1 ? currentStreak + 1 : 1;
+        }
+
+        // Rank thresholds
+        let newRank = "RECRUIT";
+        if (newStreak >= 30) newRank = "TITAN II";
+        else if (newStreak >= 15) newRank = "PRO ATHLETE";
+        else if (newStreak >= 5) newRank = "WARRIOR";
+
+        const updateResult = await userCollection.updateOne(
+          { email: normalizedEmail },
+          {
+            $set: {
+              streak: newStreak,
+              rank: newRank,
+              lastActiveDate: now,
+            },
+          },
+        );
+
+        console.log("Activity update result:", updateResult);
+
+        if (updateResult.modifiedCount === 0) {
+          return res.status(500).json({
+            success: false,
+            message: "Database update failed — document not modified",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Streak and rank updated successfully",
+          streak: newStreak,
+          rank: newRank,
+        });
+      } catch (error) {
+        console.error("Error updating user activity:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Internal server error",
+        });
+      }
+    });
+    // GET /api/user/workout-progress?email=xxx&mode=weekly|monthly
+    app.get("/api/user/workout-progress", async (req, res) => {
+      try {
+        const { email, mode = "weekly" } = req.query;
+
+        if (!email) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Email required" });
+        }
+
+        const now = new Date();
+        let data = [];
+
+        if (mode === "weekly") {
+          // ── Last 7 days, group by day ──
+          const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+          const todayIndex = now.getDay(); // 0=Sun
+
+          // Build date range for last 7 days
+          const result = [];
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date(now);
+            d.setDate(now.getDate() - i);
+            const dayStr = d.toISOString().split("T")[0];
+
+            const startOfDay = new Date(dayStr + "T00:00:00.000Z");
+            const endOfDay = new Date(dayStr + "T23:59:59.999Z");
+
+            // Count bookings for this day
+            const count = await bookingsCollection.countDocuments({
+              userEmail: email,
+              createdAt: { $gte: startOfDay, $lte: endOfDay },
+            });
+
+            result.push({
+              day: days[d.getDay()],
+              value: count > 0 ? Math.min(count * 25, 100) : 0, // scale to %
+              current: i === 0, // today
+            });
+          }
+          data = result;
+        } else if (mode === "monthly") {
+          // ── Last 4 weeks ──
+          const weeks = ["W1", "W2", "W3", "W4"];
+          const result = [];
+
+          for (let i = 3; i >= 0; i--) {
+            const weekEnd = new Date(now);
+            weekEnd.setDate(now.getDate() - i * 7);
+            const weekStart = new Date(weekEnd);
+            weekStart.setDate(weekEnd.getDate() - 6);
+
+            weekStart.setUTCHours(0, 0, 0, 0);
+            weekEnd.setUTCHours(23, 59, 59, 999);
+
+            const count = await bookingsCollection.countDocuments({
+              userEmail: email,
+              createdAt: { $gte: weekStart, $lte: weekEnd },
+            });
+
+            result.push({
+              day: weeks[3 - i],
+              value: count > 0 ? Math.min(count * 20, 100) : 0,
+            });
+          }
+          data = result;
+        }
+
+        return res.status(200).json({ success: true, data });
+      } catch (error) {
+        console.error("workout-progress error:", error);
+        return res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
+      }
+    });
 
     // ===============ADMIN RELATED ROUTES=================
 
