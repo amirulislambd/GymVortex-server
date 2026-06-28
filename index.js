@@ -1013,7 +1013,7 @@ async function run() {
           .sort(sortObj)
           .skip(skip)
           .limit(limit)
-          .sort({ createdAt: -1 })
+          .sort({ bookingCount: -1 })
           .toArray();
 
         const totalPages = Math.ceil(totalItems / limit);
