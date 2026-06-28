@@ -114,6 +114,124 @@ async function run() {
       res.json({ status: "running", message: "GymVortex API is live" });
     });
 
+    // ==========ADMIN OVERVIEW==============
+    // GET /api/admin/stats
+    app.get("/api/admin/stats", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const totalUsers = await userCollection.countDocuments();
+        const totalClasses = await classesCollection.countDocuments();
+        const totalBookings = await bookingsCollection.countDocuments();
+        const totalForums = await forumPostCollection.countDocuments();
+        const trainers = await userCollection.countDocuments({
+          role: "trainer",
+        });
+        const members = await userCollection.countDocuments({ role: "member" });
+
+        res.status(200).json({
+          success: true,
+          stats: {
+            totalUsers,
+            totalClasses,
+            totalBookings,
+            totalForums,
+            trainerCount: trainers,
+            memberCount: members,
+            userGrowth: "+5.2%",
+          },
+        });
+      } catch (err) {
+        res.status(500).json({ message: "Error fetching stats" });
+      }
+    });
+
+    // GET /api/admin/system-logs
+    app.get(
+      "/api/admin/system-logs",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const recentBookings = await bookingsCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .toArray();
+          const recentPosts = await forumPostCollection
+            .find()
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .toArray();
+
+          const logs = [...recentBookings, ...recentPosts].sort(
+            (a, b) => b.createdAt - a.createdAt,
+          );
+
+          res.status(200).json({ success: true, logs });
+        } catch (err) {
+          res.status(500).json({ message: "Error fetching logs" });
+        }
+      },
+    );
+
+    // POST /api/admin/commands/run-scan
+    app.post(
+      "/api/admin/commands/run-scan",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const suspiciousActivities = await sessionCollection
+          .find({ invalid: true })
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          message: "Security scan complete.",
+          risks: suspiciousActivities.length,
+        });
+      },
+    );
+
+    // GET /api/admin/commands/generate-report
+    app.get(
+      "/api/admin/commands/generate-report",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const reportData = await bookingsCollection.find().toArray();
+        res.status(200).json({ success: true, data: reportData });
+      },
+    );
+
+    app.get(
+      "/api/admin/db-health",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          await client.db("admin").command({ ping: 1 });
+
+          const stats = await db.stats();
+
+          res.status(200).json({
+            success: true,
+            message: "Database is healthy and responsive.",
+            data: {
+              dbName: stats.db,
+              collections: stats.collections,
+              objects: stats.objects,
+              avgObjSize: stats.avgObjSize,
+              storageSize: `${(stats.storageSize / 1024 / 1024).toFixed(2)} MB`,
+            },
+          });
+        } catch (error) {
+          res.status(500).json({
+            success: false,
+            message: "Database connection failed or unhealthy.",
+          });
+        }
+      },
+    );
+
     // ==========TRAINER SPECIFIC DASHBOARD METRICS==============
     app.get(
       "/api/trainer/dashboard-metrics",
@@ -1503,7 +1621,7 @@ async function run() {
     // GET TRAINER FORUM POST WITH SEARCH AND PAGINATION
     app.get("/api/myForumPosts", verifyToken, async (req, res) => {
       try {
-        const { email, page = 1, limit = 9, search = "" } = req.query;
+        const { email, page = 1, limit = 10, search = "" } = req.query;
         if (!email) {
           return res.status(400).json({
             success: false,
@@ -1545,6 +1663,7 @@ async function run() {
         });
       }
     });
+
     // GET FORUM BY ID
     app.get("/api/forumPost/:id", verifyToken, async (req, res) => {
       try {
@@ -1669,7 +1788,7 @@ async function run() {
     // ADD A REPLY TO A COMMENT
     app.post(
       "/api/comments/:commentId/reply",
-      verifyAdmin,
+      verifyToken,
       async (req, res) => {
         try {
           const { commentId } = req.params;
