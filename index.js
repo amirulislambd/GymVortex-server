@@ -604,7 +604,7 @@ async function run() {
         });
       }
     });
-    // GET /api/user/workout-progress?email=xxx&mode=weekly|monthly
+    // ==================== USER WORKOUT PROGRESS ====================
     app.get("/api/user/workout-progress", async (req, res) => {
       try {
         const { email, mode = "weekly" } = req.query;
@@ -1819,6 +1819,7 @@ async function run() {
           .find(query)
           .skip(skip)
           .limit(perPage)
+          .sort({ createdAt: -1 })
           .toArray();
         res.status(200).json({
           success: true,
@@ -1843,9 +1844,11 @@ async function run() {
     app.get("/api/forumPost/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
-        const result = await forumPostCollection.findOne({
-          _id: new ObjectId(id),
-        });
+        const result = await forumPostCollection
+          .findOne({
+            _id: new ObjectId(id),
+          })
+          .sort({ createdAt: -1 });
         await forumPostCollection.updateOne(
           { _id: new ObjectId(id) },
           { $inc: { views: 1 } },
