@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const os = require("os");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 
@@ -143,7 +144,44 @@ async function run() {
         res.status(500).json({ message: "Error fetching stats" });
       }
     });
+    app.get(
+      "/api/admin/user-stats",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const users = await userCollection.find({}).toArray();
+          const total = users.length;
 
+          if (total === 0) {
+            return res.status(200).json({
+              total: 0,
+              distribution: { admin: 0, trainer: 0, user: 0 },
+            });
+          }
+
+          const roles = {
+            admin: users.filter((u) => u.role === "admin").length,
+            trainer: users.filter((u) => u.role === "trainer").length,
+            user: users.filter((u) => u.role === "user").length,
+          };
+
+          const stats = {
+            total,
+            distribution: {
+              admin: parseFloat(((roles.admin / total) * 100).toFixed(1)),
+              trainer: parseFloat(((roles.trainer / total) * 100).toFixed(1)),
+              user: parseFloat(((roles.user / total) * 100).toFixed(1)),
+            },
+          };
+
+          res.status(200).json(stats);
+        } catch (error) {
+          console.error("Database Error:", error); // এটা টার্মিনালে চেক করো
+          res.status(500).json({ message: "Error fetching user stats" });
+        }
+      },
+    );
     // GET /api/admin/system-logs
     app.get(
       "/api/admin/system-logs",
@@ -151,28 +189,36 @@ async function run() {
       verifyAdmin,
       async (req, res) => {
         try {
-          const recentBookings = await bookingsCollection
-            .find()
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .toArray();
-          const recentPosts = await forumPostCollection
-            .find()
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .toArray();
+          const activityQueries = [
+            { coll: userCollection, label: "New Member Registered" },
+            { coll: bookingsCollection, label: "New Session Booked" },
+            { coll: forumPostCollection, label: "New Forum Post" },
+            { coll: applyToTrainerCollection, label: "Trainer Application" },
+            { coll: classesCollection, label: "New Class Added" },
+            { coll: commentsCollection, label: "New Forum Comment" },
+          ];
 
-          const logs = [...recentBookings, ...recentPosts].sort(
-            (a, b) => b.createdAt - a.createdAt,
-          );
+          const promises = activityQueries.map(async (q) => {
+            const data = await q.coll
+              .find()
+              .sort({ createdAt: -1 })
+              .limit(1)
+              .toArray();
+            return data.length > 0 ? { ...data[0], type: q.label } : null;
+          });
+
+          const results = await Promise.all(promises);
+
+          const logs = results
+            .filter((item) => item !== null)
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
           res.status(200).json({ success: true, logs });
         } catch (err) {
-          res.status(500).json({ message: "Error fetching logs" });
+          res.status(500).json({ message: "Failed to fetch activities" });
         }
       },
     );
-
     // POST /api/admin/commands/run-scan
     app.post(
       "/api/admin/commands/run-scan",
@@ -201,7 +247,7 @@ async function run() {
         res.status(200).json({ success: true, data: reportData });
       },
     );
-
+    // GET /api/admin/db-health
     app.get(
       "/api/admin/db-health",
       verifyToken,
@@ -231,6 +277,51 @@ async function run() {
         }
       },
     );
+
+    // GET /api/admin/system-health
+    app.get(
+      "/api/admin/system-health",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const cpuUsage = os.loadavg()[0] * 10;
+
+          const totalMem = os.totalmem();
+          const freeMem = os.freemem();
+          const usedMemPercentage = Math.floor(
+            ((totalMem - freeMem) / totalMem) * 100,
+          );
+
+          const dbStart = Date.now();
+          await db.command({ ping: 1 });
+          const latency = Date.now() - dbStart;
+
+          res.status(200).json({
+            trafficLoad: Math.min(Math.floor(cpuUsage), 100),
+            dbIntegrity: latency < 50 ? 99.99 : 90.0,
+            status: latency < 200 ? "SECURE" : "WARNING",
+            memoryUsed: usedMemPercentage + "%",
+          });
+        } catch (error) {
+          res.status(500).json({ message: "System failure" });
+        }
+      },
+    );
+    app.get("/api/admin/system-diagnostics", verifyAdmin, async (req, res) => {
+      const temp = await si.cpuTemperature();
+      const startTime = Date.now();
+      await db.collection("users").findOne({});
+      const latency = Date.now() - startTime;
+
+      res.json({
+        success: true,
+        data: {
+          cpuTemp: `${temp.main}°C`,
+          dbLatency: `${latency}ms`,
+        },
+      });
+    });
 
     // ==========TRAINER SPECIFIC DASHBOARD METRICS==============
     app.get(
@@ -1204,7 +1295,7 @@ async function run() {
       }
     });
     //  GET BOOKING BY CLASS ID
-    app.get("/api/bookings/classId", verifyToken, async (req, res) => {
+    app.get("/api/bookings/classId", async (req, res) => {
       try {
         const { classId } = req.query;
         if (!classId) {
@@ -1572,7 +1663,7 @@ async function run() {
     });
 
     // GET ALL FORUM POSTS WITH PAGINATION, SEARCH, AND FILTER
-    app.get("/api/forumPost", verifyToken, async (req, res) => {
+    app.get("/api/forumPost", async (req, res) => {
       try {
         const { page = 1, limit = 10, search, role } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
