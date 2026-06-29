@@ -1051,6 +1051,75 @@ async function run() {
         });
       }
     });
+
+
+    app.get(
+      "/api/admin/classes",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const page = parseInt(req.query.page) || 1;
+          const limit = parseInt(req.query.limit) || 12;
+          const search = req.query.search || "";
+          const status = req.query.status || "ALL";
+
+          let query = {};
+
+          if (status.toUpperCase() !== "ALL") {
+            query.status = { $regex: `^${status}`, $options: "i" };
+          }
+          if (search) {
+            query.$or = [
+              { title: { $regex: search, $options: "i" } },
+              { trainerName: { $regex: search, $options: "i" } },
+            ];
+          }
+
+          // pending → approved → rejected order
+          const sortObj = { status: -1, createdAt: -1 };
+
+          const skip = (page - 1) * limit;
+          const totalItems = await classesCollection.countDocuments(query);
+          const classesData = await classesCollection
+            .find(query)
+            .sort(sortObj)
+            .skip(skip)
+            .limit(limit)
+            .toArray();
+
+          const [pendingCount, approvedCount, rejectedCount] =
+            await Promise.all([
+              classesCollection.countDocuments({
+                status: { $regex: "^pending$", $options: "i" },
+              }),
+              classesCollection.countDocuments({
+                status: { $regex: "^approved$", $options: "i" },
+              }),
+              classesCollection.countDocuments({
+                status: { $regex: "^rejected$", $options: "i" },
+              }),
+            ]);
+
+          res.status(200).json({
+            success: true,
+            data: classesData,
+            pagination: {
+              totalItems,
+              totalPages: Math.ceil(totalItems / limit),
+              currentPage: page,
+              limit,
+            },
+            stats: { pendingCount, approvedCount, rejectedCount },
+          });
+        } catch (error) {
+          res
+            .status(500)
+            .json({ success: false, message: "Error fetching classes" });
+        }
+      },
+    );
+
     app.get("/api/classes/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -1261,6 +1330,7 @@ async function run() {
         const {
           className,
           classImage,
+          trainerName,
           priceAmount,
           userEmail,
           userName,
@@ -1388,10 +1458,7 @@ async function run() {
             message: "Class ID query parameter is required",
           });
         }
-        const bookings = await bookingsCollection
-          .find({ classId })
-          .sort({ createdAt: -1 })
-          .toArray();
+        const bookings = await bookingsCollection.find({ classId }).toArray();
         res.status(200).json({ success: true, data: bookings });
       } catch (error) {
         console.error("Error fetching bookings:", error);
@@ -1797,6 +1864,7 @@ async function run() {
     app.get("/api/myForumPosts", verifyToken, async (req, res) => {
       try {
         const { email, page = 1, limit = 10, search = "" } = req.query;
+
         if (!email) {
           return res.status(400).json({
             success: false,
@@ -1804,23 +1872,34 @@ async function run() {
           });
         }
 
+        const currentUser = req.user;
+        if (currentUser.email !== email && currentUser.role !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Forbidden: You can only view your own posts",
+          });
+        }
+
         const currentPage = parseInt(page);
         const perPage = parseInt(limit);
-        const skip = (currentPage - 1) * limit;
+        const skip = (currentPage - 1) * perPage;
 
         const query = { authorEmail: email };
 
         if (search) {
           query.title = { $regex: search, $options: "i" };
         }
+
         const totalPosts = await forumPostCollection.countDocuments(query);
         const totalPages = Math.ceil(totalPosts / perPage);
+
         const posts = await forumPostCollection
           .find(query)
+          .sort({ createdAt: -1 })
           .skip(skip)
           .limit(perPage)
-          .sort({ createdAt: -1 })
           .toArray();
+
         res.status(200).json({
           success: true,
           posts,
@@ -1839,39 +1918,52 @@ async function run() {
         });
       }
     });
-
     // GET FORUM BY ID
-    app.get("/api/forumPost/:id", verifyToken, async (req, res) => {
+    app.get("/api/forumPost/:id", async (req, res) => {
       try {
         const { id } = req.params;
-        const result = await forumPostCollection
-          .findOne({
-            _id: new ObjectId(id),
-          })
-          .sort({ createdAt: -1 });
-        await forumPostCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $inc: { views: 1 } },
-        );
-        if (!result) {
-          return res.status(404).json({
-            success: false,
-            message: "Forum post not found",
-          });
+
+        if (!ObjectId.isValid(id)) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid post ID" });
         }
-        res.status(200).json({
-          success: true,
-          data: result,
+
+        const result = await forumPostCollection.findOne({
+          _id: new ObjectId(id),
         });
+
+        if (!result) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Post not found" });
+        }
+
+        // Daily unique view check
+        const userEmail = req.user?.email;
+        const todayStr = new Date().toISOString().split("T")[0]; // "2026-06-29"
+        const viewKey = `${userEmail}_${todayStr}`;
+
+        const alreadyViewed = (result.viewedBy || []).includes(viewKey);
+
+        if (!alreadyViewed) {
+          await forumPostCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $inc: { views: 1 },
+              $addToSet: { viewedBy: viewKey },
+            },
+          );
+        }
+
+        res.status(200).json({ success: true, data: result });
       } catch (error) {
         console.error("Error fetching forum post:", error);
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-        });
+        res
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
       }
     });
-
     //  UPDATE FORUM POST
     app.put("/api/forumPost/:id", async (req, res) => {
       try {
