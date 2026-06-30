@@ -1348,6 +1348,11 @@ async function run() {
             message: "Booking already exists with this session ID",
           });
         }
+        const bookingCount = await classesCollection.findOneAndUpdate(
+          { _id: new ObjectId(classId) },
+          { $inc: { bookingCount: 1 } },
+          { returnDocument: "after" },
+        );
 
         // create a new booking to the database
         const newBooking = {
